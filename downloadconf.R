@@ -1,0 +1,11 @@
+#file:downloadconf.R: settings for download.R
+NASAusername = 'hydrosolutions'
+NASApassword = 'hydro1Sol'
+MODIS_DATASTORAGE = "/home/jules/MODISStorage/" # Set to NULL when no persistent storage should be used. This is not recommended when several shapefiles are on the same MODIS Tile, because the Tile will then be downloaded and deleted for every shapefile. Better use an temporary Folder as MODIS_DATASTORAGE and delete it after every run of the script download.R
+DATASTORAGE_LOC = "/home/jules/liveNDVIdata/" # Set to NULL when no persistent storage should be used. This is not recommended when several shapefiles are on the same MODIS Tile, because the Tile will then be downloaded and deleted for every shapefile. Better use an temporary Folder as MODIS_DATASTORAGE and delete it after every run of the script download.R
+DATABASE_LOC = "example_database.csv"
+SHAPEFILE_LOC = "/home/jules/MODIS_Service/shapefiles/"
+maxDOWNLOADchunk = 30 #max period in days of downloading tiles before processing and deleting (if MODIS_DATASTORAGE is set to NULL)
+TIMESERIES_DEFAULT_NAME = "timeseries.csv"
+GEOTIFF_COMPRESSION = TRUE
+
