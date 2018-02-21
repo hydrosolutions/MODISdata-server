@@ -57,7 +57,7 @@ GenerateCompressionArgument <- function(compression) {
 
 removeCorruptHDF <- function(path, product=NULL, max.deletions=3) {
   # Deletes all files that can not be properly read by gdalinfo as a HDF4 or HDF5 file.
-  # Only files that match the MODIS filename pattern (can be further limited with the argument product) are tested
+  # Only files that match the MODIS filename pattern (can be further limited with the argument product) are considered
   list <- list.files(path, pattern=paste(product,".*\\.hdf$",sep=""), recursive = TRUE, full.names = TRUE)
   count = 0
   for (file in list) {
@@ -194,7 +194,6 @@ getMODISNDVI <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudm
     mosaic_rasters(GTifflist2,dstfile,co=compressionmethod)  #
     outputdates=c(outputdates,as.character(HDFlistbydate$dates[i]))
     outputfiles=c(outputfiles, dstfile)
-    cat('--->',as.character(dstfile),' has been generated\n',sep='')
     }
   }
 
@@ -280,7 +279,7 @@ check_available_data <- function(datapath) {
   csv_file <- file.path(abs_path,TIMESERIES_DEFAULT_NAME)
   if (file.exists(csv_file)) {
     ts <- read.csv(csv_file)
-    ts_dates <- as.data.frame(ts$Date)
+    ts_dates <- as.data.frame(ts$date)
   } else {
     ts_dates <- NULL
   }
@@ -394,6 +393,12 @@ UpdateAndProcess <- function(shapefilelist) {
           dir.create(datapath, recursive=TRUE)
         }
         
+        tmpdir <- file.path(tempdir(),"geotiffs")
+        if (dir.exists(tmpdir)) {
+          do.call(unlink, list(tmpdir,recursive=TRUE))
+        }
+        dir.create(tmpdir)
+        
         # Download and process new MODIS observations
         cat('\n','############### Data for ',name,' are being updated from ',as.character(daterange[1]),' to ',as.character(daterange[2]),' ... ###############','\n',sep='')
         
@@ -408,19 +413,19 @@ UpdateAndProcess <- function(shapefilelist) {
               srcdatapath <- file.path(DATASTORAGE_LOC,srcdatapath)
               srcdatapath <- gsub("//","/",srcdatapath)
             }
-            rasterimages <- cropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, compression = GEOTIFF_COMPRESSION)
+            rasterimages <- cropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = tmpdir, compression = GEOTIFF_COMPRESSION)
           }
           
         } else {
           cat('... using data from MODIS FTP server ...','\n',sep='')
-          rasterimages <- getMODISNDVI(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, hdfstorage=MODIS_DATASTORAGE, compression=GEOTIFF_COMPRESSION) #Download&Process MODIS Data
+          rasterimages <- getMODISNDVI(date = daterange, shapefilepath=shapefilepath, dstfolder=tmpdir, hdfstorage=MODIS_DATASTORAGE, compression=GEOTIFF_COMPRESSION) #Download&Process MODIS Data
         }
         
         # Add new observations to timeseries file
         if (!is.null(rasterimages)) {
           cat('Updating Time Series for ',name,' ...','\n',sep='')
           
-          gtifffiles = list.files(datapath, pattern = "\\.tif$", full.names = TRUE)
+          gtifffiles = list.files(tmpdir, pattern = "\\.tif$", full.names = TRUE)
           dates=as.Date(sub(".tif","",basename(gtifffiles)))
           newdata = data.frame(gtifffiles, dates)
           
@@ -428,27 +433,58 @@ UpdateAndProcess <- function(shapefilelist) {
           csvpath <- file.path(datapath,TIMESERIES_DEFAULT_NAME)
           if (file.exists(csvpath)) {
             ts <- read.csv(csvpath,stringsAsFactors = FALSE, header = TRUE)
-            newdata <- newdata[!as.Date(newdata$dates) %in% as.Date(ts$date),]
+            newtsdata <- newdata[!as.Date(newdata$dates) %in% as.Date(ts$date),]
           } else {
             ts <- data.frame()
+            newtsdata <- newdata
           }
           
-          if (nrow(newdata)>0) {
-            values <- vector(mode="numeric", length=length(newdata[,1]))
-            dates <- vector(mode='character',length=length(newdata[,1]))
-            for (i in 1:length(values)) {
-              r <- raster(as.character(newdata[i,'gtifffiles']))*0.0001
+          if (nrow(newtsdata)>0) {
+            values <- vector(mode="numeric", length=length(newtsdata[,1]))
+            dates <- vector(mode='character',length=length(newtsdata[,1]))
+            for (k in 1:length(values)) {
+              r <- raster(as.character(newtsdata[k,'gtifffiles']))*0.0001
               r[r==-1]=NA
-              values[i]=mean(values(r), na.rm=TRUE)
-              dates[i]=as.character(newdata[i,'dates'])
+              values[k]=mean(values(r), na.rm=TRUE)
+              dates[k]=as.character(newtsdata[k,'dates'])
             }
             ts <- rbind(ts,data.frame(date=dates,value=values))
-            ts = ts[order(ts[,2], decreasing=TRUE),]
+            ts = ts[order(ts$date, decreasing=FALSE),]
             write.csv(ts,file=csvpath,row.names=FALSE) 
+            
+            if (!shapefilelist$store_geotiff[i]) {
+              if (shapefilelist$cloud_correct[i]) {
+                mostrecent <- newdata[newdata$dates %in% max(newdata$dates),] #Exclude the most recent files
+                file.remove(list.files(datapath, pattern = "\\.tif$", full.names = TRUE))
+                file.copy(from=as.character(mostrecent$gtifffiles), to=datapath)
+                do.call(unlink, list(tmpdir,recursive=TRUE))
+              } else {
+                do.call(unlink, list(tmpdir,recursive=TRUE))
+              }
+            } else {
+              if (is.numeric(shapefilelist$store_length[i])) {
+                gtifffiles <- list.files(datapath, pattern = "\\.tif$", full.names = TRUE)
+                dates=as.Date(sub(".tif","",basename(gtifffiles)))
+                datainstorage = data.frame(gtifffiles, dates)
+                alldates <- c(datainstorage$dates,newdata$dates)
+                alldates <- alldates[order(alldates,decreasing=TRUE)]
+                dates2keep <- alldates[1:round(shapefilelist$store_length[i])]
+                datainstorage2remove <- datainstorage[!datainstorage$dates %in% dates2keep,]
+                if (nrow(datainstorage2remove)>0) {
+                  file.remove(as.character(datainstorage2remove$gtifffiles)) 
+                }
+                newdata2keep <- newdata[newdata$dates %in% dates2keep,]
+                file.copy(from=as.character(newdata2keep$gtifffiles), to=datapath)
+              } else {
+                file.copy(from=as.character(newdata$gtifffiles), to=datapath)
+              }
+                do.call(unlink, list(tmpdir,recursive=TRUE))
+            }
           }
         } else {
           cat('No new data were found for ',name,'\n',sep='')
         }
+        
       }
     }
   }
