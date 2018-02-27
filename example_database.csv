@@ -1,4 +1,3 @@
-ID,name,shapefile,datapath,is_subregion_of,store_geotiff,store_length,cloud_correct,earliestdate,latestdate
-G1,Guantao,/home/jules/MODIS_Service/shapefiles/guantao_chn.shp,guantao,NA,TRUE,2,TRUE,2018-01-01,NULL
-I1,Italy,/home/jules/MODIS_Service/shapefiles/ITA_adm0.shp,italy,NA,FALSE,,TRUE,2018-01-20,2018-01-30
-I2,Kleinitalien,/home/jules/MODIS_Service/shapefiles/Kleinitalien.shp,kleinitalien,I1,FALSE,,TRUE,2018-01-20,2018-01-30
+ID,name,shapefile,is_subregion_of,store_geotiff,store_length,cloud_correct,earliestdate,latestdate
+G1,Guantao1,/home/jules/MODIS_Service/shapefiles/guantao_chn.shp,H1,TRUE,NA,FALSE,2018-01-01,2018-01-02
+H1,Handan1,/home/jules/MODIS_Service/shapefiles/handan.shp,NA,TRUE,NA,FALSE,2018-01-01,2018-01-02

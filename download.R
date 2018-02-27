@@ -5,7 +5,7 @@
 cmd = TRUE
 try({
   setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-  source('download.conf')
+  source('config.R')
   cmd = FALSE
   }, silent = TRUE
 )
@@ -14,9 +14,9 @@ try({
 if (cmd) {
   args = commandArgs(trailingOnly=TRUE)
   if (length(args)<1) {
-    stop("Argument for configuration file is missing, try: Rscript download.R path/download.conf")
+    stop("Argument for configuration file is missing, try: Rscript download.R path/config.R")
   } else if (length(args)>1) {
-    stop("Too many arguments, try: Rscript download.R path/download.conf")
+    stop("Too many arguments, try: Rscript download.R path/config.R")
   } else {
     if (!file.exists(args)) {
       stop(paste("The file ",args," does not exist."))
@@ -53,6 +53,20 @@ GenerateCompressionArgument <- function(compression) {
     compressionmethod <- "compress=none" 
   }
   return(compressionmethod)
+}
+
+isString <- function(value) {
+  sapply(value, FUN = function(x) {
+    if (is.na(x) || is.null(x) || x == "") {
+      return(FALSE)
+    } else {
+      return(TRUE)
+    }
+  })
+}
+
+isDate <- function(value) {
+  return(tryCatch({as.Date(value);TRUE}, error = function(e) {FALSE}))
 }
 
 removeCorruptHDF <- function(path, product=NULL, max.deletions=3) {
@@ -96,7 +110,7 @@ getMODISNDVI <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudm
   dir.create(tempfolder)
   oldwd = getwd()
   setwd(tempfolder)
-  if (!is.null(hdfstorage)) {
+  if (!is.na(hdfstorage)) {
     capture.output(capture.output(MODISoptions(quiet=TRUE,localArcPath=hdfstorage,save=FALSE),file='NULL', type="message"),file='NULL') #capture.output to drop all the initiliastion messages of MODIS package
   } else {
     capture.output(capture.output(MODISoptions(quiet=TRUE,localArcPath=tempfolder,save=FALSE),file='NULL', type="message"),file='NULL')
@@ -214,6 +228,8 @@ getMODISNDVI <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudm
 }
 
 isPartOfExtent <- function(outside,inside) {
+  outside <- round(outside,3) # to avoid error due to precision errors
+  inside <- round(inside,3)
   left <- xmin(inside) >= xmin(outside)
   right <- xmax(inside) <= xmax(outside)
   top <- ymin(inside) >= ymin(outside)
@@ -268,22 +284,18 @@ cropFromGeotiff <- function(date, shapefilepath, srcfolder, dstfolder, compressi
   }
 }
 
-check_available_data <- function(datapath) {
-  # find the geotiff folder
-  if (!isAbsolutePath(datapath)) {
-    abs_path <- file.path(DATASTORAGE_LOC,datapath)
-    abs_path <- gsub("//","/",abs_path) # Remove additional slashes
-  }
+check_available_data <- function(datapath, timeseries_filename) {
   
-  csv_file <- file.path(abs_path,TIMESERIES_DEFAULT_NAME)
+
+  csv_file <- file.path(datapath,timeseries_filename)
   if (file.exists(csv_file)) {
     ts <- read.csv(csv_file)
-    ts_dates <- as.data.frame(ts$date)
+    ts_dates <- as.data.frame(as.Date(ts$date))
   } else {
     ts_dates <- NULL
   }
   
-  geotiff_list <- list.files(abs_path, pattern="*.tif")
+  geotiff_list <- list.files(datapath, pattern="*.tif")
   if (length(geotiff_list>0)) {
     geotiff_dates=as.data.frame(as.Date(sub(".tif","",basename(geotiff_list))))
   } else {
@@ -294,8 +306,8 @@ check_available_data <- function(datapath) {
   return(list(TS = unname(ts_dates), GEOTIFF = unname(geotiff_dates)))
 }
 
-get_latest_observation <- function(datapath, geotiff=FALSE) {
-  available_dates <- check_available_data(datapath)
+get_latest_observation <- function(datapath, geotiff=FALSE, timeseries_filename) {
+  available_dates <- check_available_data(datapath, timeseries_filename)
   if (geotiff) {
     available_dates <- available_dates$GEOTIFF
   } else {
@@ -305,61 +317,118 @@ get_latest_observation <- function(datapath, geotiff=FALSE) {
   if (is.null(available_dates)) {
     return(NULL)
   } else {
-    return(max(as.Date(unlist(available_dates))))
+    return(as.Date(max(unlist(available_dates))))
   }
 }
 
-UpdateAndProcess <- function(shapefilelist) {
-  shapefilelist <- shapefilelist[order(shapefilelist$is_subregion_of, na.last =  FALSE),] # order dataframe such that subregions come last
+UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL, timeseries_filename = "timeseries.csv", max_download_chunk=15, geotiff_compression = TRUE) {
   
-  if (is.na(MODIS_DATASTORAGE)) {
+  # Check Storage Location for RAW Modis Data (or set up a temporary folder) and output files and stop, if they do not exist. 
+  if (!isString(modis_datastorage)) {
     localArcPath <- file.path(tempdir(), "MODIS")
+    dir.create(localArcPath)
+    cat("Persistent Storage of MODIS RAW Data is turned off. Configurate MODIS_DATASTORAGE to a valid path to enable it.")
+  } else if (dir.exists(modis_datastorage)) {
+    localArcPath <- modis_datastorage
   } else {
-    localArcPath <- MODIS_DATASTORAGE
+    stop(paste("The path modis_datastorage=",modis_datastorage," does not exist",sep=""))
   }
   
-  if (!dir.exists(DATASTORAGE_LOC)) {dir.create(DATASTORAGE_LOC, recursive = TRUE)}
-  MODISoptions(MODISserverOrder="LAADS",quiet=TRUE,localArcPath=localArcPath,outDirPath=DATASTORAGE_LOC) 
+  if (!dir.exists(storage_location)) {
+    stop(paste("The path storage_location=",storage_location," does not exist",sep=""))
+  }
+
+  # Initialise MODIS package. 
+  MODISoptions(MODISserverOrder="LAADS",quiet=TRUE,localArcPath=localArcPath,outDirPath=storage_location) 
   
-  # Find latest observation for each database entry
+  # Check and Rearrange database list. Order dataframe such that subregions come last.
+  if (!is.logical(database$store_geotiff) || any(is.na(database$store_geotiff))) {
+    stop("Invalid entry in the database for store_geotiff. Only logicals (TRUE/FALSE) are allowed.")
+  } else if (!is.numeric(database$store_length) | !all(database$store_length>0, na.rm=TRUE)) {
+    stop("Invalid entry in the database for store_length. Only numerics (1,2,3,... or NA) are allowed.")
+  } else if (!is.logical(database$cloud_correct) || any(is.na(database$cloud_correct))) {
+    stop("Invalid entry in the database for cloud_correct. Only logicals (TRUE/FALSE) are allowed.")
+  } else if (any(duplicated(database$ID))) {
+    stop("The ID entries in the given database are not unique")
+  } else if (any(duplicated(database$name))) {
+    stop("The name entries in the given database are not unique")
+  } else if (!isDate(database$earliestdate)) {
+    stop("The entries for earliestdate must be of format YYYY-MM-DD or NA (NA -> as far back in time as possibe)")
+  } else if (!isDate(database$latestdate)) {
+    stop("The entries for latestdate must be of format YYYY-MM-DD or NA (NA -> today")
+  } else if (!all(database$is_subregion_of[isString(database$is_subregion_of)] %in% database$ID)) {
+    stop("One or more entries for is_subregion_of do not have a correspondend entry for a parent region")
+  } else if (!all(file.exists(as.character(database$shapefile)))) {
+    stop("One or more of the shapefiles in the database do not exist. Make sure the pathname is correct")
+  }
+  
+  database <- database[order(database$is_subregion_of, na.last =  FALSE),] 
+  
+  # Resolve nested subregion dependancy to the last parentregion and check for circular dependancy
+  for (i in 1:nrow(database)) {
+    parentregion=data.frame()
+    subregion <- as.character(database$is_subregion_of[i])
+    subregionlist <- c(subregion)
+    while (isString(subregion)) {
+      parentregion <- database[database$ID==subregion,]
+      subregion <- as.character(parentregion$is_subregion_of)
+      subregionlist <- c(subregionlist,subregion)
+      if (any(duplicated(subregionlist))) {
+        stop("There is a circular dependancy of subregions!")
+      }
+    }
+    if (nrow(parentregion)==1) {
+      database$is_subregion_of[i] <- as.character(parentregion$ID)
+    }
+  }
+  
+  # Find the latest observation for each database entry
+  # Earliest date is either the entry in the database if no geotiffs or timeseries is found in the datapath. Otherwise the latest observation 
+  # of the timeseries is taken (store_geotiff=FALSE) or the latest observation that exists as geotiff (store_geotiff=TRUE)
+  # Latest date is either the entry latestdate in the database, but if it is NA, latest date is set to today (systemtime)
   df_dates <- data.frame()
-  for (i in 1:nrow(shapefilelist)) {
-    date <- get_latest_observation(shapefilelist$datapath[i], geotiff=shapefilelist$store_geotiff[i])
+  for (i in 1:nrow(database)) {
+    name=as.character(database$name[i])
+    datapath <- file.path(storage_location,name)
+    date <- get_latest_observation(datapath, geotiff=database$store_geotiff[i], timeseries_filename=timeseries_filename)
     if (is.null(date)) {
-      startdate <- as.Date(shapefilelist$earliestdate[i])
+      startdate <- as.Date(database$earliestdate[i])
     } else {
       startdate <- date+1
     }
     
-    # TODO: Introduce better test for null
-    if (shapefilelist$latestdate[i]=="NULL") {
+    datevalue <- database$latestdate[i]
+    if (is.na(datevalue)) {
       enddate <- Sys.Date()
     } else {
-      enddate <- shapefilelist$latestdate[i]
+      enddate <- as.Date(database$latestdate[i])
     }
-    df <- data.frame(ID = shapefilelist$ID[i], startdate=startdate, enddate = enddate)
+    df <- data.frame(ID = database$ID[i], startdate=startdate, enddate = enddate)
     df_dates <- rbind(df_dates,df)
   }
   rownames(df_dates) <- df_dates$ID
   
-  # Create timerange and daterangechunks
+  # daterange from earliest to latest date of all database entries
   startdate <- min(df_dates$startdate)
   enddate <- max(df_dates$enddate)
   daterange = c(startdate,enddate)
   daterange_days = enddate-startdate
   
-  # Split MODIS search window into chunks if the daterange exceed maxDOWNLOADchunk
-  if (daterange_days>maxDOWNLOADchunk) {
-    chunks_startdate <- seq(startdate,enddate, by=30)
+  # Split processing window into chunks if the daterange exceeds maxDOWNLOADchunk
+  if (daterange_days>max_download_chunk) {
+    chunks_startdate <- seq(startdate,enddate, by=max_download_chunk)
   } else {
     chunks_startdate <- daterange[1] 
   }
   downloadchunks <- data.frame(start=chunks_startdate, end=c(chunks_startdate[-1]-1,enddate))
   
+  # Start Updating data: Loop over all downloadchunks resp. daterange pieces. After every chunk, delete temporary files to free harddisk space. 
+  # Within the outer loop, loop over every entry of the database 
   for (j in 1:nrow(downloadchunks)) {
-    removefinally <- c()
-    for (i in 1:nrow(shapefilelist)) {
-      ID <- as.character(shapefilelist$ID[i])
+    removefinally <- c() # Empty character vector that collects temporary files, that are not required anymore
+    for (i in 1:nrow(database)) {
+      ID <- as.character(database$ID[i])
+      
       # if startdate of database entry is within downloadchunk window, begin updating data
       # crop daterange if shapefiles startdate/enddate is later/earlier than startdate/enddate of downloadchunk
       if ((downloadchunks$end[j] >= df_dates[ID,"startdate"]) && (downloadchunks$start[j] <= df_dates[ID,"enddate"])) {
@@ -375,57 +444,44 @@ UpdateAndProcess <- function(shapefilelist) {
           daterange[2] <- downloadchunks$end[j]
         }
         
-        # concentate shapefile path if given path is not absolute
-        name=as.character(shapefilelist$name[i])
-        shapefilepath=as.character(shapefilelist$shapefile[i])
-        if (!isAbsolutePath(shapefilepath)) {
-          #TODO: throw warning if path is not correct
-          shapefilepath <- file.path(SHAPEFILE_LOC,shapefilepath)
-          shapefilepath <- gsub("//","/",shapefilepath)
-        }
-        
-        # concentate data path if given path is not absolute
-        datapath=as.character(shapefilelist$datapath[i])
-        if (!isAbsolutePath(datapath)) {
-          datapath <- file.path(DATASTORAGE_LOC,datapath)
-          datapath <- gsub("//","/",datapath)
-        }
+        # concentate datapath from entry name and storage location.
+        # Create folder if does not yet exist
+        name=as.character(database$name[i])
+        datapath <- file.path(storage_location,name)
         if (!dir.exists(datapath)) {
           dir.create(datapath, recursive=TRUE)
         }
         
-        # Download and process new MODIS observations
+        # Now start downloading and processing new MODIS observations
         cat('\n','############### Data for ',name,' are being updated from ',as.character(daterange[1]),' to ',as.character(daterange[2]),' ... ###############','\n',sep='')
         
-        if (!is.na(shapefilelist$is_subregion_of[i])) {
-          cat('... using data from PARENTREGION with ID ',as.character(shapefilelist$is_subregion_of[i]),' ...','\n',sep='')
-          parentregion <- shapefilelist[shapefilelist$ID==as.character(shapefilelist$is_subregion_of[i]),]
-          if (nrow(parentregion)==0) {
-            warning(paste("The ID",shapefilelist$is_subregion_of[i],"given for is_subregion_of does not have a valid entry", sep=" "))
-          } else {
-            srcdatapath <- parentregion$datapath
-            if (!isAbsolutePath(srcdatapath)) {
-              srcdatapath <- file.path(DATASTORAGE_LOC,srcdatapath)
-              srcdatapath <- gsub("//","/",srcdatapath)
-            }
-            rasterimages <- cropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, compression = GEOTIFF_COMPRESSION)
-          }
+        shapefilepath <- as.character(database$shapefile[i])
+        
+        # fetch the entry of the parentregion if current entry is a subregion. 
+        subregion <- as.character(database$is_subregion_of[i])
+        parentregion <- database[database$ID==subregion,]
           
+        # If the current entry is a a subregion, fetch data from parent region datapath. Otherwise access MODIS FTP via MODIS package
+        if (nrow(parentregion)==1) {
+          cat('... using data from PARENTREGION with ID ',as.character(parentregion$ID),' ...','\n',sep='')
+          srcdatapath <- file.path(storage_location,as.character(parentregion$name))
+          rasterimages <- cropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, compression = geotiff_compression)
         } else {
           cat('... using data from MODIS FTP server ...','\n',sep='')
-          rasterimages <- getMODISNDVI(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, hdfstorage=MODIS_DATASTORAGE, compression=GEOTIFF_COMPRESSION) #Download&Process MODIS Data
+          rasterimages <- getMODISNDVI(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, hdfstorage=modis_datastorage, compression=geotiff_compression) #Download&Process MODIS Data
         }
         
-        # Add new observations to timeseries file
+        # Add new observations to timeseries file and tag rasterimages, that are not anymore required.
         if (!is.null(rasterimages)) {
           cat('Updating Time Series for ',name,' ...','\n',sep='')
           
+          # Get a list of all available rasterimages/geotiffs. Extract date vector from filenames and create dataframe with filename-date pairs.
           gtifffiles <- list.files(datapath, pattern = "\\.tif$", full.names = TRUE)
           dates=as.Date(sub(".tif","",basename(gtifffiles)))
           datainstorage = data.frame(gtifffiles, dates)
           
-          # Concentating filename for timeseries. Reading existing file or creating an empty data.frame
-          csvpath <- file.path(datapath,TIMESERIES_DEFAULT_NAME)
+          # Read any existing timeseries file, othwerwise create empty dataframe. Extract the dates from datainstorage, for which no entry in the timeseries exists.
+          csvpath <- file.path(datapath,timeseries_filename)
           if (file.exists(csvpath)) {
             ts <- read.csv(csvpath,stringsAsFactors = FALSE, header = TRUE)
             newtsdata <- datainstorage[!as.Date(datainstorage$dates) %in% as.Date(ts$date),]
@@ -434,6 +490,7 @@ UpdateAndProcess <- function(shapefilelist) {
             newtsdata <- datainstorage
           }
           
+          # if new data for timeseries are available, read the corresponding rasterimages and add value to the timeseries.
           if (nrow(newtsdata)>0) {
             values <- vector(mode="numeric", length=length(newtsdata[,1]))
             dates <- vector(mode='character',length=length(newtsdata[,1]))
@@ -448,22 +505,24 @@ UpdateAndProcess <- function(shapefilelist) {
             write.csv(ts,file=csvpath,row.names=FALSE) 
           }
           
-            if (!shapefilelist$store_geotiff[i]) {
-              if (shapefilelist$cloud_correct[i]) {
-                datainstorage2remove <- datainstorage[!datainstorage$dates %in% max(datainstorage$dates),] #Excludes the most recent files
-                removefinally <- c(removefinally,as.character(datainstorage2remove$gtifffiles))  
-              } else {
-                removefinally <- c(removefinally,list.files(datapath, pattern = "\\.tif$", full.names = TRUE))
-              }
+          # Add rasterimages that shall not be stored and are thus no longer required after the current download/daterangechunk to the vector removefinally.
+          # If cloud correct is activated, keep the most recent rasterimage, even if store_geotiff is set to FALSE
+          if (!database$store_geotiff[i]) {
+            if (database$cloud_correct[i]) {
+              datainstorage2remove <- datainstorage[!datainstorage$dates %in% max(datainstorage$dates),] #Excludes the most recent files
+              removefinally <- c(removefinally,as.character(datainstorage2remove$gtifffiles))  
             } else {
-              if (!is.na(shapefilelist$store_length[i]) && is.numeric(shapefilelist$store_length[i]) && shapefilelist$store_length[i]>0) {
-                alldates <- datainstorage$dates
-                alldates <- alldates[order(alldates,decreasing=TRUE)]
-                dates2keep <- alldates[1:round(shapefilelist$store_length[i])] 
-                datainstorage2remove <- datainstorage[!datainstorage$dates %in% dates2keep,]
-                removefinally <- c(removefinally,as.character(datainstorage2remove$gtifffiles)) 
-              } 
+              removefinally <- c(removefinally,list.files(datapath, pattern = "\\.tif$", full.names = TRUE))
             }
+          } else {
+            if (!is.na(database$store_length[i]) && is.numeric(database$store_length[i]) && database$store_length[i]>0) {
+              alldates <- datainstorage$dates
+              alldates <- alldates[order(alldates,decreasing=TRUE)]
+              dates2keep <- alldates[1:round(database$store_length[i])] 
+              datainstorage2remove <- datainstorage[!datainstorage$dates %in% dates2keep,]
+              removefinally <- c(removefinally,as.character(datainstorage2remove$gtifffiles)) 
+            } 
+          }
         } else {
           cat('No new data were found for ',name,'\n',sep='')
         }
@@ -477,13 +536,9 @@ UpdateAndProcess <- function(shapefilelist) {
 }
 
 # Read list of shapefiles
-database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE)
+database <- database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE, colClasses = c("character","character","character","character","logical","numeric","logical","character","character"))
 
-if (any(duplicated(database$ID))) {
-  stop("The ID entries in the given database are not unique")
-}
-
-UpdateAndProcess(database)
+UpdateAndProcess(database, storage_location=DATASTORAGE_LOC, modis_datastorage = MODIS_DATASTORAGE, max_download_chunk = maxDOWNLOADchunk)
   
   
 
