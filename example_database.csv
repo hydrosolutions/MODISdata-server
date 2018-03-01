@@ -1,3 +1,2 @@
 ID,name,shapefile,is_subregion_of,store_geotiff,store_length,cloud_correct,earliestdate,latestdate
-G1,Guantao1,/home/jules/MODIS_Service/shapefiles/guantao_chn.shp,H1,TRUE,NA,FALSE,2018-01-01,2018-01-02
-H1,Handan1,/home/jules/MODIS_Service/shapefiles/handan.shp,NA,TRUE,NA,FALSE,2018-01-01,2018-01-02
+KG,Kyrgyzstan,/home/jules/MODIS_Service/shapefiles/KGZ_adm0.shp,NA,TRUE,NA,TRUE,2018-01-01,2018-01-15

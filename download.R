@@ -1,5 +1,7 @@
 #!/usr/bin/env Rscript
 
+#################### MODIS SNOW MOD10A1/MYD10A1 ##############################
+
 # Check if Script is run from RStudio and load the default configuration file
 # Else receive command line argument for "path to configuration file"
 cmd = TRUE
@@ -44,8 +46,90 @@ library(leaflet)
 library(lubridate)
 library(XML)
 library(R.utils)
+library(httr)
 
-# LOAD CONFIGURATION
+listHDFfiles <- function(product, datapath,tileH=tile@tileH,tileV=tile@tileV,begin=NULL,end=NULL) {
+  tileHpattern <- paste(sprintf("%02d", tileH),collapse="|")
+  tileVpattern <- paste(sprintf("%02d", tileV),collapse="|")
+  pattern <- paste(product,".*h(",tileHpattern,")v(",tileVpattern,").*","\\.hdf$",sep="")
+  localfilesearch <- list.files(path=datapath, pattern=pattern, recursive = TRUE, full.names=TRUE)
+  
+  localfiles <- data.frame(path=c(),date=c(), file=c())
+  if (length(localfilesearch) > 0) {
+    filename <- basename(localfilesearch)
+    dates <- extractDate(filename,asDate=TRUE,pos1=10, pos2=16)$inputLayerDates
+    index <- rep(TRUE,length(dates))
+    if (!is.null(begin)) {
+      index <- index & (dates >= begin)
+    }
+    if (!is.null(end)) {
+      index <- index & (dates <= end)
+    }
+    localfiles <- rbind(localfiles,data.frame(path=localfilesearch[index],date=dates[index], file=filename[index]))
+  }
+  return(localfiles)
+}
+
+getMODIS_SNOW <- function(product, datapath, begin=date[[1]],end=date[[2]],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE) {
+  if (product == "MOD10A1") {
+    product.collection <- "MOD10A1.006"
+    baselink <- "https://n5eil01u.ecs.nsidc.org/MOST/MOD10A1.006/"
+  } else if (product == "MYD10A1") {
+    product.collection <- "MYD10A1.006"
+    baselink <- "https://n5eil01u.ecs.nsidc.org/MOSA/MYD10A1.006/"
+  } else {
+    stop("This function only supports MOD10A1 or MYD10A1")
+  }
+  
+  datapath <- file.path(datapath,"MODIS",product.collection)
+  if (!dir.exists(datapath)) {
+    dir.create(datapath)
+  }
+  
+  # getavailable local files
+  localfiles <- listHDFfiles(product=product,datapath,tileH=tileH,tileV=tileV)
+  
+  # get available online files
+  tileHpattern <- paste(sprintf("%02d", tileH),collapse="|")
+  tileVpattern <- paste(sprintf("%02d", tileV),collapse="|")
+  pattern <- paste(product,".*h(",tileHpattern,")v(",tileVpattern,").*","\\.hdf$",sep="")
+  out <- GET(baselink, 
+             authenticate("hydrosolutions", "Hydromet2018"))
+  links <- xpathSApply(htmlParse(out), "//a/@href")
+  links <- unname(links[!duplicated(links)])
+  
+  onlinefiles <- data.frame(file = c(), date = c(), link = c())
+  for (link in links) {
+    date <- as.Date(link,format="%Y.%m.%d/")
+    if (!is.na(date) && date >= begin && date <= end) {
+      nextlink <- paste(baselink,link,sep="")
+      out <- GET(nextlink, authenticate("hydrosolutions", "Hydromet2018"))
+      links2 <- xpathSApply(htmlParse(out), "//a/@href")
+      links2 <- unname(links2[!duplicated(links2)])
+      files <- links2[grepl(pattern, links2)]
+      if (length(files)>0) {
+        onlinefiles <- rbind(onlinefiles, data.frame(file = files, date = date, link = paste(nextlink,files,sep="")))
+      }
+    }
+  }
+  
+  newfiles <- onlinefiles[!onlinefiles$file %in% localfiles$file,]
+  if (nrow(newfiles) > 0) {
+    for (i in 1:nrow(newfiles)) {
+      savepath <- file.path(datapath,format(newfiles$date[i],format="%Y.%m.%d"))
+      if (!dir.exists(savepath)) {
+        dir.create(savepath)
+      }
+      response <- RETRY("GET",as.character(newfiles$link[i]), times=3, authenticate("julesair2", "538-FuJnS"), write_disk(path = file.path(savepath,newfiles$file[i]),overwrite = TRUE))
+      if (!response$status_code==200) {
+        file.remove(file.path(savepath,newfiles$file[i]))
+      }
+    }
+  }
+  availablefile <- listHDFfiles(product=product,datapath,tileH=tileH,tileV=tileV, begin=begin, end=end)
+  return(as.vector(availablefile$path))
+}
+
 GenerateCompressionArgument <- function(compression) {
   if (compression) {
     compressionmethod <- c("COMPRESS=deflate","zlevel=9")
@@ -92,7 +176,7 @@ removeCorruptHDF <- function(path, product=NULL, max.deletions=3) {
   }
 }
 
-getMODISNDVI <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudmask=TRUE, compression=FALSE){
+UpdateAndProcessMODIS <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudmask=TRUE, compression=FALSE){
   # Input: 
   # date=c(begindate,enddate)
   # shapefile = path to a valid shapefile
@@ -111,10 +195,9 @@ getMODISNDVI <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudm
   oldwd = getwd()
   setwd(tempfolder)
   if (!is.na(hdfstorage)) {
-    capture.output(capture.output(MODISoptions(quiet=TRUE,localArcPath=hdfstorage,save=FALSE),file='NULL', type="message"),file='NULL') #capture.output to drop all the initiliastion messages of MODIS package
+    localArcPath=hdfstorage
   } else {
-    capture.output(capture.output(MODISoptions(quiet=TRUE,localArcPath=tempfolder,save=FALSE),file='NULL', type="message"),file='NULL')
-    checkHDFintegrity()
+    localArcPath=tempfolder
   } 
   
   if (!dir.exists(dstfolder)) {
@@ -130,12 +213,12 @@ getMODISNDVI <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudm
   tile <- getTile(e)
 
   # Try MODIS Aqua first
-  x='MYD13Q1'
-  out1=tryCatch(getHdf(product=x,begin=date[[1]],end=date[[2]],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
+  x='MYD10A1'
+  out1=tryCatch(getMODIS_SNOW(product=x,datapath=localArcPath,begin=date[[1]],end=date[[2]],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
   
   # Then MODIS Terra
-  x='MOD13Q1'
-  out2=tryCatch(getHdf(product=x,begin=date[[1]],end=date[[2]],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
+  x='MOD10A1'
+  out2=tryCatch(getMODIS_SNOW(product=x,datapath=localArcPath,begin=date[[1]],end=date[[2]],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
   
   # Merge lists of downloaded HDF Tiles
   files <- c(unname(unlist(out1)),unname(unlist(out2)))
@@ -151,62 +234,71 @@ getMODISNDVI <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudm
   
   # Sort list of downloaded files by date
   dates = extractDate(basename(files),asDate=TRUE, pos1=10, pos2=16)$inputLayerDates
-  observationsbydate = data.frame(dates,files)
+  tiles <- substr(basename(as.character(files)),start=18,stop=23)
+  observationsbydate = data.frame(dates,tiles,files)
   observationsbydate = by(as.data.frame(observationsbydate), as.data.frame(observationsbydate)[,"dates"], function(x) x)
   
   # Process all Tiles of each observation date
   for (k in 1:nrow(observationsbydate)) {
     
     filesvalid=TRUE #help variable in case a HDF File is corrupted
-    HDFlistbydate =  observationsbydate[[k]]
-    GTifflist <- vector(length=nrow(HDFlistbydate))
-    GTifflist2 <- vector(length=nrow(HDFlistbydate))
+    HDFlist =  observationsbydate[[k]]
+    HDFlistbydateandtile <- by(as.data.frame(HDFlist), as.data.frame(HDFlist)[,"tiles"], function(x) x)
+    GTifflist <- c()
+    GTifflist2 <- c()
 
 	# Go through each Tile of the current date and: check file integrity, extract EVI layer, cut to shapefile, reproject to EPSG:4326
-    for (i in 1:nrow(HDFlistbydate)){
-
-	  cat('Processing ... ',as.character(HDFlistbydate$files[i]),'\n',sep='')
-      GTifflist[i]=tempfile('NDVI',tempfolder,fileext = ".tif")
-      GTifflist2[i]=tempfile('NDVI',tempfolder, fileext = ".tif")
-      
-      t <- tryCatch(gdalinfo(HDFlistbydate$files[i]), warning = function(w) {NULL} ,error = function(e) {NULL})
-      if (is.null(t)) {
-        unlink(as.character(HDFlistbydate$files[i]))
-        try(getHdf(HdfName=basename(as.character(HDFlistbydate$files[i])), wait=10))
-        t <- tryCatch(gdalinfo(HDFlistbydate$files[i]), warning = function(w) {NULL} ,error = function(e) {NULL})
+    for (i in 1:nrow(HDFlistbydateandtile)){
+      for (j in 1:nrow(HDFlistbydateandtile[[i]])) {
+        HDFfile <- HDFlistbydateandtile[[i]][j,]
+        cat('Processing ... ',as.character(HDFfile$files),'\n',sep='')
+        GTifflist[i]=tempfile('NDVI',tempfolder,fileext = ".tif")
+        GTifflist2[i]=tempfile('NDVI',tempfolder, fileext = ".tif")
+        
+        t <- tryCatch(gdalinfo(HDFfile$files), warning = function(w) {NULL} ,error = function(e) {NULL})
+        if (is.null(t)) {
+          unlink(as.character(HDFfile$files))
+          try(getHdf(HdfName=basename(as.character(HDFfile$files)), wait=10))
+          t <- tryCatch(gdalinfo(HDFfile$files), warning = function(w) {NULL} ,error = function(e) {NULL})
           if (is.null(t)) {
-            cat('Download was not successfull. Try to manually download the following file and check its validity: ', as.character(HDFlistbydate$files[i]),'\n',sep='')
+            cat('Download was not successfull. Try to manually download the following file and check its validity: ', as.character(HDFfile$files),'\n',sep='')
             filesvalid=FALSE
             setwd(oldwd)
             break
           }
+        }
+        
+        sds<-getSds(as.character(HDFfile$files))
+        mask<-raster(readGDAL(sds$SDS4gdal[2], as.is=TRUE, silent=TRUE))
+        if (j>1) {
+          evi2 <- evi
+        } 
+        evi<-raster(readGDAL(sds$SDS4gdal[1], as.is=TRUE, silent=TRUE))
+        
+        if (cloudmask) {
+          evi[mask > 2 | is.na(evi) | evi>100]<- NA
+          evi[evi>0] <- 0.06+1.21*evi[evi>0] # https://www.sciencedirect.com/science/article/pii/S0034425703002864
+          evi[evi>100] <- 100
+        }
+        rm(mask);gc()
+        if (j>1) {
+          evi<-mosaic(evi,evi2,fun=mean) #mean of both rasters, na.rm=TRUE
+        }
       }
+	    
       
-      sds<-getSds(as.character(HDFlistbydate$files[i]))
-      qualityband<-raster(readGDAL(sds$SDS4gdal[12], as.is=TRUE, silent=TRUE))
-      mask<-calc(qualityband, fun = function(x) {bitwAnd(2,x)})
-      rm(qualityband);gc() # free memory
-      evi<-raster(readGDAL(sds$SDS4gdal[2], as.is=TRUE, silent=TRUE))
-      
-      if (cloudmask) {
-        evi[mask==2]<- -10000
-        evi[is.na(evi)]<- -10000
-      }
-      
-      rm(mask);gc()
-      
-      writeRaster(evi,filename=GTifflist[i],format="GTiff",datatype="INT2S")
+      writeRaster(evi,filename=GTifflist[i],format="GTiff",overwrite=TRUE, dataType="INT1S")
       rm(evi);gc()
-      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326") #Transform GTiff and crop to shapefile
+      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16") #Transform GTiff and crop to shapefile
 
     }
 	
 	# In case all Tiles of the current date are valid, mosaic them to one Gtiff File
     if (filesvalid) {
-    filename=paste(HDFlistbydate$dates[i],'.tif',sep='')
+    filename=paste(HDFlist$dates[i],'.tif',sep='')
     dstfile <- file.path(dstfolder,filename)
-    mosaic_rasters(GTifflist2,dstfile,co=compressionmethod)  #
-    outputdates=c(outputdates,as.character(HDFlistbydate$dates[i]))
+    mosaic_rasters(GTifflist2,dstfile,co=compressionmethod, ot="Int16")  #
+    outputdates=c(outputdates,as.character(HDFlist$dates[i]))
     outputfiles=c(outputfiles, dstfile)
     }
   }
@@ -459,32 +551,56 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
         
         # fetch the entry of the parentregion if current entry is a subregion. 
         subregion <- as.character(database$is_subregion_of[i])
-        parentregion <- database[database$ID==subregion,]
           
         # If the current entry is a a subregion, fetch data from parent region datapath. Otherwise access MODIS FTP via MODIS package
-        if (nrow(parentregion)==1) {
+        if (isString(subregion)) {
+          parentregion <- database[database$ID==subregion,]
           cat('... using data from PARENTREGION with ID ',as.character(parentregion$ID),' ...','\n',sep='')
           srcdatapath <- file.path(storage_location,as.character(parentregion$name))
           rasterimages <- cropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, compression = geotiff_compression)
         } else {
           cat('... using data from MODIS FTP server ...','\n',sep='')
-          rasterimages <- getMODISNDVI(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, hdfstorage=modis_datastorage, compression=geotiff_compression) #Download&Process MODIS Data
+          rasterimages <- UpdateAndProcessMODIS(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, hdfstorage=modis_datastorage, compression=geotiff_compression) #Download&Process MODIS Data
         }
         
         # Add new observations to timeseries file and tag rasterimages, that are not anymore required.
         if (!is.null(rasterimages)) {
-          cat('Updating Time Series for ',name,' ...','\n',sep='')
-          
           # Get a list of all available rasterimages/geotiffs. Extract date vector from filenames and create dataframe with filename-date pairs.
           gtifffiles <- list.files(datapath, pattern = "\\.tif$", full.names = TRUE)
           dates=as.Date(sub(".tif","",basename(gtifffiles)))
-          datainstorage = data.frame(gtifffiles, dates)
+          datainstorage = data.frame(file=gtifffiles, date=dates)
           
+          if (database$cloud_correct[i]) {
+            cat('Cloud Correcting Geotiff images ... ')
+            newdata = rasterimages[order(rasterimages$date, decreasing=FALSE),]
+            olddata<-datainstorage[!(datainstorage$file %in% newdata$file),]
+            if (nrow(olddata)>0) {
+              olddata = olddata[order(olddata$date, decreasing=TRUE),]
+              old_r <- raster(as.character(olddata$file[1]))
+            } else {
+              old_r <- raster(as.character(newdata$file[1]))
+              newdata <- newdata[-1,]
+            }
+            
+            old_r[old_r<0]<-NA
+            
+            for (imagefile in newdata$file) {
+              r <- raster(imagefile)
+              r[r<0]=NA
+              r <- merge(r,old_r)
+              old_r<-r
+              remove(r);gc()
+              writeRaster(old_r,filename=imagefile,format="GTiff",overwrite=TRUE, dataType="INT1S")
+            }
+          }
+          
+          
+          cat('Updating Time Series for ',name,' ...','\n',sep='')
           # Read any existing timeseries file, othwerwise create empty dataframe. Extract the dates from datainstorage, for which no entry in the timeseries exists.
           csvpath <- file.path(datapath,timeseries_filename)
           if (file.exists(csvpath)) {
             ts <- read.csv(csvpath,stringsAsFactors = FALSE, header = TRUE)
-            newtsdata <- datainstorage[!as.Date(datainstorage$dates) %in% as.Date(ts$date),]
+            newtsdata <- datainstorage[!as.Date(datainstorage$date) %in% as.Date(ts$date),]
           } else {
             ts <- data.frame()
             newtsdata <- datainstorage
@@ -495,10 +611,10 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
             values <- vector(mode="numeric", length=length(newtsdata[,1]))
             dates <- vector(mode='character',length=length(newtsdata[,1]))
             for (k in 1:length(values)) {
-              r <- raster(as.character(newtsdata[k,'gtifffiles']))*0.0001
-              r[r==-1]=NA
+              r <- raster(as.character(newtsdata$file[k]))
+              r[r<0]=NA
               values[k]=mean(values(r), na.rm=TRUE)
-              dates[k]=as.character(newtsdata[k,'dates'])
+              dates[k]=as.character(newtsdata$date[k])
             }
             ts <- rbind(ts,data.frame(date=dates,value=values))
             ts = ts[order(ts$date, decreasing=FALSE),]
@@ -509,18 +625,18 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
           # If cloud correct is activated, keep the most recent rasterimage, even if store_geotiff is set to FALSE
           if (!database$store_geotiff[i]) {
             if (database$cloud_correct[i]) {
-              datainstorage2remove <- datainstorage[!datainstorage$dates %in% max(datainstorage$dates),] #Excludes the most recent files
-              removefinally <- c(removefinally,as.character(datainstorage2remove$gtifffiles))  
+              datainstorage2remove <- datainstorage[!datainstorage$date %in% max(datainstorage$date),] #Excludes the most recent files
+              removefinally <- c(removefinally,as.character(datainstorage2remove$file))  
             } else {
               removefinally <- c(removefinally,list.files(datapath, pattern = "\\.tif$", full.names = TRUE))
             }
           } else {
             if (!is.na(database$store_length[i]) && is.numeric(database$store_length[i]) && database$store_length[i]>0) {
-              alldates <- datainstorage$dates
+              alldates <- datainstorage$date
               alldates <- alldates[order(alldates,decreasing=TRUE)]
               dates2keep <- alldates[1:round(database$store_length[i])] 
-              datainstorage2remove <- datainstorage[!datainstorage$dates %in% dates2keep,]
-              removefinally <- c(removefinally,as.character(datainstorage2remove$gtifffiles)) 
+              datainstorage2remove <- datainstorage[!datainstorage$date %in% dates2keep,]
+              removefinally <- c(removefinally,as.character(datainstorage2remove$file)) 
             } 
           }
         } else {
@@ -536,7 +652,7 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
 }
 
 # Read list of shapefiles
-database <- database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE, colClasses = c("character","character","character","character","logical","numeric","logical","character","character"))
+database <- database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE, colClasses = c("character","character","character","character","logical","numeric","logical","character","character"), na.strings = "NA")
 
 UpdateAndProcess(database, storage_location=DATASTORAGE_LOC, modis_datastorage = MODIS_DATASTORAGE, max_download_chunk = maxDOWNLOADchunk)
   
