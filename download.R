@@ -48,12 +48,28 @@ library(XML)
 library(R.utils)
 library(httr)
 
-listHDFfiles <- function(product, datapath,tileH=tile@tileH,tileV=tile@tileV,begin=NULL,end=NULL) {
+listHDFfiles <- function(product, datapath,tileH=NULL,tileV=NULL,begin=NULL,end=NULL) {
+  # Searches a local folder for MODIS .hdf files within the specifications for product, tile and daterange
+  #
+  # Args:
+  #   product: any MODIS product abbreviation as character, e.g. "MOD10A1" or "MYD10A1"
+  #   tileH,tileV: The path where to search for files.
+  #   tileH, tileV: A vector with the tile numbers which should be downloaded. Each element in tileH corresponds to the element at the same index in tileV. 
+  #                 Both vectors must be of the same length. If NULL, any tiles will be selected.
+  #   begin,end: the begin or end date within which files should be selected, e.g. as.Date(2017-01-01). If NULL, all files of any date will be selected.
+  #
+  # Returns:
+  #  data.frame with rows (path, file, date) of all files that have been found
+  
+  # Concentate search pattern
   tileHpattern <- paste(sprintf("%02d", tileH),collapse="|")
   tileVpattern <- paste(sprintf("%02d", tileV),collapse="|")
   pattern <- paste(product,".*h(",tileHpattern,")v(",tileVpattern,").*","\\.hdf$",sep="")
+  
+  # Find files with specified pattern
   localfilesearch <- list.files(path=datapath, pattern=pattern, recursive = TRUE, full.names=TRUE)
   
+  # Filter files for daterange begin to end
   localfiles <- data.frame(path=c(),date=c(), file=c())
   if (length(localfilesearch) > 0) {
     filename <- basename(localfilesearch)
@@ -70,7 +86,49 @@ listHDFfiles <- function(product, datapath,tileH=tile@tileH,tileV=tile@tileV,beg
   return(localfiles)
 }
 
-getMODIS_SNOW <- function(product, datapath, begin=date[[1]],end=date[[2]],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE) {
+DownloadMODIS_10A1 <- function(product, datapath, daterange, tileH, tileV, max_wait=300, checkIntegrity=FALSE) {
+  # Updates local MODIS MOD10A1/MYD10A1 files within the specified range
+  #
+  # Args:
+  #   prodcut: either "MOD10A1" or "MYD10A1"
+  #   datapath: The path where existing files are currently stored. Must be of the following structure: <datapath>/MODIS/<PRODUCT.COLLECTION>
+  #             e.g. /home/user/datasorage/MODIS/MYD10A1.006/. If the strcuture does not exist, it will be created under datapath.
+  #   daterange: a vector with the start- and enddate for whcih data should be downloaded, e.g. c(as.Date("2018-01-01"),as.Date("2018-01-31"))
+  #   tileH, tileV: A vector with the tile numbers which should be downloaded. Each element in tileH corresponds to the element at the same index in tileV. 
+  #                 Both vectors must be of the same length.
+  #   max_wait: The maximum time in seconds, that should be waited after a failed request to the server
+  #   checkIntegrity: If True, all hdf files for the specified product in datapath are checked for validity. Invalid files are removed. Use with care!
+  #
+  # Returns:
+  #   a vector of the absolute path to all .hdf files, that are available in datapath within the specified range. Includes all files, not only those which have been downloaded.
+  
+  # Helper function to check integrity of local file structure
+  removeCorruptHDF <- function(path, prefix=NULL, max.deletions=Inf) {
+    # Deletes all .hdf files in path that can not be properly read by gdalinfo as a HDF4 or HDF5 file.
+    #
+    # Args:
+    #   path: a vector defining the start- and enddate for which MODIS data shall be generated. e.g. daterange=c(as.Date(2018-01-01),today())
+    #   prefix: Only .hdf files with the specified prefix are considered. Can be used to differentiate between e.g. different MODIS products (MOD10A1,MYD10A1)
+    #   max.deletions: max. number of deletions before an error is raised. Default is Infinity. Can bes used to avoid accidental deletion of complete data record.
+    #
+    # Returns:
+    #   Nothing, but prints message n console which files have been deleted or if max.deletions has been reached
+    
+    list <- list.files(path, pattern=paste(prefix,".*\\.hdf$",sep=""), recursive = TRUE, full.names = TRUE)
+    count = 0
+    for (file in list) {
+      validfile <- isvalidHDF_4_5(file)
+      if (!validfile && file.exists(file) && count<max.deletions) {
+        count <- count + 1
+        file.remove(file)
+        cat(file," has been removed because it was an invalid or corrupted HDF file \n")
+      } else if (count>=max.deletions) {
+        stop("The maximum number of files to be deleted has been reached \n")
+      }
+    }
+  }
+  
+  # Set product specific variables
   if (product == "MOD10A1") {
     product.collection <- "MOD10A1.006"
     baselink <- "https://n5eil01u.ecs.nsidc.org/MOST/MOD10A1.006/"
@@ -81,56 +139,87 @@ getMODIS_SNOW <- function(product, datapath, begin=date[[1]],end=date[[2]],tileH
     stop("This function only supports MOD10A1 or MYD10A1")
   }
   
+  # Check if datapath exists, or else create it. Check file validity if argument checkIntegrity=TRUE
   datapath <- file.path(datapath,"MODIS",product.collection)
   if (!dir.exists(datapath)) {
     dir.create(datapath)
+  } else if (checkIntegrity) {
+    removeCorruptHDF(datapath, product=product, max.deletions=Inf)
+  }
+  tempfile <- tempfile()
+  
+  # input preparations
+  begin <- daterange[1]
+  end <- daterange[2]
+  
+  if (!length(tileH)==length(tileV)) {
+    stop("Argument tileH and tileV must be of the same length.")
   }
   
-  # getavailable local files
+  # get a list of available local files
   localfiles <- listHDFfiles(product=product,datapath,tileH=tileH,tileV=tileV)
   
-  # get available online files
+  # get available online files. Start at webserver root and fetch all links from index.html.
+  # Webserver structure is: root/YYYY.MM.DD/****.hdf
+  cat("Browsing the webserver file structure for new files\n")
   tileHpattern <- paste(sprintf("%02d", tileH),collapse="|")
   tileVpattern <- paste(sprintf("%02d", tileV),collapse="|")
   pattern <- paste(product,".*h(",tileHpattern,")v(",tileVpattern,").*","\\.hdf$",sep="")
-  out <- GET(baselink, 
-             authenticate("hydrosolutions", "Hydromet2018"))
+  out <- RETRY("GET",baselink, pause_cap = max_wait, times=3, authenticate("hydrosolutions", "Hydromet2018"))
+  if (!out$status_code==200) {
+    stop(paste("The server at ",baselink, " can not be rached. Try again later"))
+  }
   links <- xpathSApply(htmlParse(out), "//a/@href")
   links <- unname(links[!duplicated(links)])
   
+  # Valid links to HDF files can be read with as.Date(). Go one level deeper into server file structure and again fetch all links.
+  # Filter links by product***hxxvxx***.hdf pattern
   onlinefiles <- data.frame(file = c(), date = c(), link = c())
   for (link in links) {
     date <- as.Date(link,format="%Y.%m.%d/")
     if (!is.na(date) && date >= begin && date <= end) {
       nextlink <- paste(baselink,link,sep="")
-      out <- GET(nextlink, authenticate("hydrosolutions", "Hydromet2018"))
-      links2 <- xpathSApply(htmlParse(out), "//a/@href")
-      links2 <- unname(links2[!duplicated(links2)])
-      files <- links2[grepl(pattern, links2)]
-      if (length(files)>0) {
-        onlinefiles <- rbind(onlinefiles, data.frame(file = files, date = date, link = paste(nextlink,files,sep="")))
-      }
+      out <- RETRY("GET", nextlink, pause_cap = max_wait, times=3, authenticate("hydrosolutions", "Hydromet2018"))
+      if (out$status_code==200) {
+        links2 <- xpathSApply(htmlParse(out), "//a/@href")
+        links2 <- unname(links2[!duplicated(links2)])
+        files <- links2[grepl(pattern, links2)]
+        if (length(files)>0) {
+          onlinefiles <- rbind(onlinefiles, data.frame(file = files, date = date, link = paste(nextlink,files,sep="")))
+        }
+      }  
     }
   }
   
+  # Compare available online files with existing local files.
   newfiles <- onlinefiles[!onlinefiles$file %in% localfiles$file,]
+  
+  # Download any files that are missing in the local file storage. After download, check file validity, then move file to datapath
   if (nrow(newfiles) > 0) {
     for (i in 1:nrow(newfiles)) {
       savepath <- file.path(datapath,format(newfiles$date[i],format="%Y.%m.%d"))
       if (!dir.exists(savepath)) {
         dir.create(savepath)
       }
-      response <- RETRY("GET",as.character(newfiles$link[i]), times=3, authenticate("julesair2", "538-FuJnS"), write_disk(path = file.path(savepath,newfiles$file[i]),overwrite = TRUE))
-      if (!response$status_code==200) {
-        file.remove(file.path(savepath,newfiles$file[i]))
-      }
+      dstfile <- file.path(savepath,newfiles$file[i])
+      filelink <- as.character(newfiles$link[i])
+      cat("Downloading ",filelink,"\n")
+      response <- RETRY("GET",filelink, pause_cap = max_wait, times=3, authenticate("julesair2", "538-FuJnS"), write_disk(path = tempfile,overwrite = TRUE))
+      if (response$status_code==200 && !isvalidHDF_4_5(tempfile)) {
+        file.copy(tempfile,dstfile)
+      } 
+      file.remove(tempfile)
     }
   }
+  
+  # Compile a list of all file in datapath that fit into the specified range for product, daterange and tile
   availablefile <- listHDFfiles(product=product,datapath,tileH=tileH,tileV=tileV, begin=begin, end=end)
   return(as.vector(availablefile$path))
 }
 
 GenerateCompressionArgument <- function(compression) {
+  # Helper function to set the compression argument for gdalwarp
+  
   if (compression) {
     compressionmethod <- c("COMPRESS=deflate","zlevel=9")
   } else {
@@ -140,6 +229,13 @@ GenerateCompressionArgument <- function(compression) {
 }
 
 isString <- function(value) {
+  # Can value be read as a string or is it NA,NULL or empty?
+  #
+  # Args:
+  #   value: the data object or a vector of data objects to be checked
+  # Returns:
+  #   a vector of TRUE or FALSE
+  
   sapply(value, FUN = function(x) {
     if (is.na(x) || is.null(x) || x == "") {
       return(FALSE)
@@ -150,41 +246,50 @@ isString <- function(value) {
 }
 
 isDate <- function(value) {
-  return(tryCatch({as.Date(value);TRUE}, error = function(e) {FALSE}))
+  # Can value be converted to a Date object?
+  #
+  # Args:
+  #   value: the data object or a vector of data objects to be read as date
+  # Returns:
+  #   a vector of TRUE or FALSE
+  
+  sapply(value, FUN = function(x) {
+    tryCatch({as.Date(x);TRUE}, error = function(e) {FALSE})
+  })
 }
 
-removeCorruptHDF <- function(path, product=NULL, max.deletions=3) {
-  # Deletes all files that can not be properly read by gdalinfo as a HDF4 or HDF5 file.
-  # Only files that match the MODIS filename pattern (can be further limited with the argument product) are considered
-  list <- list.files(path, pattern=paste(product,".*\\.hdf$",sep=""), recursive = TRUE, full.names = TRUE)
-  count = 0
-  for (file in list) {
-    validfile <- tryCatch({gdalinfo(file)}, warning = function(w) {FALSE} ,error = function(e) {FALSE})
-    if (validfile[1]=="Driver: HDF4/Hierarchical Data Format Release 4" || validfile[1]=="Driver: HDF5/Hierarchical Data Format Release 5") {
-      validfile <- TRUE} 
-    else {
-      validfile <- FALSE
-    }
-    if (!validfile && file.exists(file) && count<max.deletions) {
-      count <- count + 1
-      file.remove(file)
-      cat(file," has been removed because it was an invalid or corrupted HDF file.")
-    } else if (count>=max.deletions) {
-      cat("The maximum number of files to be deleted has been reached")
-      break
-    }
+isvalidHDF_4_5 <- function(filename) {
+  # Checks if the file at filename is a valid HDF4 or HDF5 file and can be read by gdal.
+  #
+  # Args:
+  #   filename: path to the file that should be checked.
+  #
+  # Returns:
+  #   TRUE(valid HDF file) or FALSE
+  
+  validfile <- tryCatch({gdalinfo(filename)}, warning = function(w) {FALSE} ,error = function(e) {FALSE})
+  if (validfile[1]=="Driver: HDF4/Hierarchical Data Format Release 4" || validfile[1]=="Driver: HDF5/Hierarchical Data Format Release 5") {
+    out <- TRUE} 
+  else {
+    out <- FALSE
   }
+  return(out)
 }
 
-UpdateAndProcessMODIS <- function(date, shapefilepath, dstfolder, hdfstorage=NULL, cloudmask=TRUE, compression=FALSE){
-  # Input: 
-  # date=c(begindate,enddate)
-  # shapefile = path to a valid shapefile
-  # dstfolder = path to the folder, where output GeoTiff Files shall be saved
-  # path to a Folder for persistant MODIS HDF storage (when there is a chance that the HDFs are used again). NULL when 
-  # no persistent storage should be used. All downloaded MODIS HDF Files will then be deleted after processing.
-  # Set compression argument for gdalwarp option -co
-  compressionmethod <- GenerateCompressionArgument(compression)
+ProcessMODIS <- function(daterange, shapefilepath, dstfolder, hdfstorage=NULL, geotiff_compression=TRUE){
+  # Download and Processes the MODIS data for the specified daterange and extent.
+  #
+  # Args:
+  #   daterange: a vector defining the start- and enddate for which MODIS data shall be generated. e.g. daterange=c(as.Date(2018-01-01),today())
+  #   shapefilepath: A path to a shapefile with one polygon, that defines the extent for which data shall be generated. Output is cropped to the extent of the poylgon.
+  #   dstfolder: The folder where the output geotiffs are written to.
+  #   hdfstorage: The folder where prior downloaded MODIS hdf files are stored and the newly downlaoded files will be written to. Default is NULL: no storage. HDF files will be deleted at the end.
+  #   geotiff_compression: Default: TRUE if output geotiff should be compressed (lossless,deflate level=9). FALSE for no compression.
+  #
+  # Returns:
+  #   data.frame(file=c(character()),date=c(date())): A dataframe that contains the full filename and date of the newly generated geotiff files.
+
+  compressionmethod <- GenerateCompressionArgument(geotiff_compression)
   
   tempfolder = file.path(tempdir(),"processing")
   
@@ -194,7 +299,7 @@ UpdateAndProcessMODIS <- function(date, shapefilepath, dstfolder, hdfstorage=NUL
   dir.create(tempfolder)
   oldwd = getwd()
   setwd(tempfolder)
-  if (!is.na(hdfstorage)) {
+  if (!is.null(hdfstorage)) {
     localArcPath=hdfstorage
   } else {
     localArcPath=tempfolder
@@ -204,8 +309,7 @@ UpdateAndProcessMODIS <- function(date, shapefilepath, dstfolder, hdfstorage=NUL
     dir.create(dstfolder)
   }
   
-  outputdates=c()
-  outputfiles=c()
+  output=data.frame(file=c(),date=c())
 
   # Get vector of required tiles for the specified shapefile
   myshp <- readOGR(shapefilepath, verbose=FALSE)
@@ -214,36 +318,36 @@ UpdateAndProcessMODIS <- function(date, shapefilepath, dstfolder, hdfstorage=NUL
 
   # Try MODIS Aqua first
   x='MYD10A1'
-  out1=tryCatch(getMODIS_SNOW(product=x,datapath=localArcPath,begin=date[[1]],end=date[[2]],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
+  out1=tryCatch(DownloadMODIS_10A1(product=x,datapath=localArcPath,daterange=daterange,tileH=tile@tileH,tileV=tile@tileV), error = function(e) {NULL})
   
   # Then MODIS Terra
   x='MOD10A1'
-  out2=tryCatch(getMODIS_SNOW(product=x,datapath=localArcPath,begin=date[[1]],end=date[[2]],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
+  out2=tryCatch(DownloadMODIS_10A1(product=x,datapath=localArcPath,daterange=daterange,tileH=tile@tileH,tileV=tile@tileV), error = function(e) {NULL})
   
   # Merge lists of downloaded HDF Tiles
-  files <- c(unname(unlist(out1)),unname(unlist(out2)))
+  files <- c(out1,out2)
 
   # abort when nothing has been downloaded or the number of downlaoded tiles does not coincide with the number of required tiles for this shapefile
   if ((length(files) %% length(tile@tileH)*length(tile@tileV)) > 0) {
     setwd(oldwd)
-    return(NULL) #TODO: return more meaningful output, and delete files maybe?
+    return(output) 
   } else if (length(files)==0) {
     setwd(oldwd)
-    return(NULL)
+    return(output)
   }
   
   # Sort list of downloaded files by date
   dates = extractDate(basename(files),asDate=TRUE, pos1=10, pos2=16)$inputLayerDates
   tiles <- substr(basename(as.character(files)),start=18,stop=23)
-  observationsbydate = data.frame(dates,tiles,files)
-  observationsbydate = by(as.data.frame(observationsbydate), as.data.frame(observationsbydate)[,"dates"], function(x) x)
+  observationsbydate = data.frame(date=dates,tile=tiles,file=files)
+  observationsbydate = by(as.data.frame(observationsbydate), as.data.frame(observationsbydate)[,"date"], function(x) x)
   
   # Process all Tiles of each observation date
   for (k in 1:nrow(observationsbydate)) {
     
     filesvalid=TRUE #help variable in case a HDF File is corrupted
     HDFlist =  observationsbydate[[k]]
-    HDFlistbydateandtile <- by(as.data.frame(HDFlist), as.data.frame(HDFlist)[,"tiles"], function(x) x)
+    HDFlistbydateandtile <- by(as.data.frame(HDFlist), as.data.frame(HDFlist)[,"tile"], function(x) x)
     GTifflist <- c()
     GTifflist2 <- c()
 
@@ -251,23 +355,21 @@ UpdateAndProcessMODIS <- function(date, shapefilepath, dstfolder, hdfstorage=NUL
     for (i in 1:nrow(HDFlistbydateandtile)){
       for (j in 1:nrow(HDFlistbydateandtile[[i]])) {
         HDFfile <- HDFlistbydateandtile[[i]][j,]
-        cat('Processing ... ',as.character(HDFfile$files),'\n',sep='')
-        GTifflist[i]=tempfile('NDVI',tempfolder,fileext = ".tif")
-        GTifflist2[i]=tempfile('NDVI',tempfolder, fileext = ".tif")
+        cat('Processing ... ',as.character(HDFfile$file),'\n',sep='')
+        GTifflist[i]=tempfile(tempfolder,fileext = ".tif")
+        GTifflist2[i]=tempfile(tempfolder, fileext = ".tif")
         
-        t <- tryCatch(gdalinfo(HDFfile$files), warning = function(w) {NULL} ,error = function(e) {NULL})
-        if (is.null(t)) {
-          unlink(as.character(HDFfile$files))
-          try(getHdf(HdfName=basename(as.character(HDFfile$files)), wait=10))
-          t <- tryCatch(gdalinfo(HDFfile$files), warning = function(w) {NULL} ,error = function(e) {NULL})
-          if (is.null(t)) {
-            cat('Download was not successfull. Try to manually download the following file and check its validity: ', as.character(HDFfile$files),'\n',sep='')
+        validHDF <- isvalidHDF_4_5(HDFfile$file)
+        if (!validHDF) {
+          unlink(as.character(HDFfile$file))
+          cat('The downloaded file has not been recognized as a valid HDF4/5 file. Try again or manually download the following file and check its validity: ', as.character(HDFfile$files),'\n',sep='')
             filesvalid=FALSE
             setwd(oldwd)
             break
           }
         }
         
+        # GEOTIFF PROCESSING: TO DO, make function
         sds<-getSds(as.character(HDFfile$files))
         mask<-raster(readGDAL(sds$SDS4gdal[2], as.is=TRUE, silent=TRUE))
         if (j>1) {
@@ -275,11 +377,10 @@ UpdateAndProcessMODIS <- function(date, shapefilepath, dstfolder, hdfstorage=NUL
         } 
         evi<-raster(readGDAL(sds$SDS4gdal[1], as.is=TRUE, silent=TRUE))
         
-        if (cloudmask) {
-          evi[mask > 2 | is.na(evi) | evi>100]<- NA
-          evi[evi>0] <- 0.06+1.21*evi[evi>0] # https://www.sciencedirect.com/science/article/pii/S0034425703002864
-          evi[evi>100] <- 100
-        }
+        evi[mask > 2 | is.na(evi) | evi>100]<- NA
+        evi[evi>0] <- 0.06+1.21*evi[evi>0] # https://www.sciencedirect.com/science/article/pii/S0034425703002864
+        evi[evi>100] <- 100
+        
         rm(mask);gc()
         if (j>1) {
           evi<-mosaic(evi,evi2,fun=mean) #mean of both rasters, na.rm=TRUE
@@ -298,39 +399,30 @@ UpdateAndProcessMODIS <- function(date, shapefilepath, dstfolder, hdfstorage=NUL
     filename=paste(HDFlist$dates[i],'.tif',sep='')
     dstfile <- file.path(dstfolder,filename)
     mosaic_rasters(GTifflist2,dstfile,co=compressionmethod, ot="Int16")  #
-    outputdates=c(outputdates,as.character(HDFlist$dates[i]))
-    outputfiles=c(outputfiles, dstfile)
+    output <- rbind(output,data.frame(file=dstfile,date=HDFlist$dates[i])) #TODO, date format correct?
     }
-  }
 
-  output=data.frame(outputfiles,outputdates)
-  names(output)[1] <- 'file'
-  names(output)[2] <- 'date'
   
-  # Delete all temporary working data and HDF Files if argument hdfstorage is NULL (no persistent storage)
+  # Delete all temporary working data and HDF Files in the temporary folder (if argument hdfstorage is NULL)
   do.call(unlink, list(tempfolder,recursive=TRUE))
-  
-  if (is.null(hdfstorage)) {
-    delHdf("MOD13Q1",ask=FALSE)
-    delHdf("MYD13Q1",ask=FALSE)
-  }
   
   setwd(oldwd)
   return(output)
 }
 
-isPartOfExtent <- function(outside,inside) {
-  outside <- round(outside,3) # to avoid error due to precision errors
-  inside <- round(inside,3)
-  left <- xmin(inside) >= xmin(outside)
-  right <- xmax(inside) <= xmax(outside)
-  top <- ymin(inside) >= ymin(outside)
-  bottom <- ymax(inside) <= ymax(outside)
-  return(all(c(left,right,top,bottom)))
-}
-
-cropFromGeotiff <- function(date, shapefilepath, srcfolder, dstfolder, compression=FALSE) {
-  compressionmethod <- GenerateCompressionArgument(compression)
+cropFromGeotiff <- function(date, shapefilepath, srcfolder, dstfolder, geotiff_compression=FALSE) {
+  # Helper function to compare to Extent objects
+  isPartOfExtent <- function(outside,inside) {
+    outside <- round(outside,3) # to avoid error due to precision errors
+    inside <- round(inside,3)
+    left <- xmin(inside) >= xmin(outside)
+    right <- xmax(inside) <= xmax(outside)
+    top <- ymin(inside) >= ymin(outside)
+    bottom <- ymax(inside) <= ymax(outside)
+    return(all(c(left,right,top,bottom)))
+  }
+  
+  compressionmethod <- GenerateCompressionArgument(geotiff_compression)
   
   if (!dir.exists(dstfolder)) {
     dir.create(dstfolder)
@@ -413,9 +505,22 @@ get_latest_observation <- function(datapath, geotiff=FALSE, timeseries_filename)
   }
 }
 
-UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL, timeseries_filename = "timeseries.csv", max_download_chunk=15, geotiff_compression = TRUE) {
+UpdateMODISData <- function(database, storage_location, modis_datastorage=NULL, timeseries_filename = "timeseries.csv", max_download_chunk=15, geotiff_compression = TRUE) {
+  # Updates and Processes the MODIS Data for all entries listed in database.
+  #
+  # Args:
+  #   database: a .csv file containing a list of region, for which MODIS data shall be updated. For a sample file and description see example_database.csv.
+  #   storage_location: The path, where prior existing data are stored and where the output of the function will go.
+  #   modis_datastorage: The path, where the downlaoded RAW MODIS .hdf files are kept. NULL if no persistent storage is required. hdf files will be deleted after every downloadchunk.
+  #   timeseries_filename: The filename of the csv file where the timeseries data is written to. Default: timeseries.csv.
+  #   max_download_chunk: The number of days for one updating&processing step. During this time, all temporary files (hdf & geotiff) are kept in order to avoid multiple download of the same file.
+  #                       Default is 15 days. If harddisk storage is critical, the value should be lower. If a path is given for argument modis_datastorage, max_download_chunk is not critical.
+  #   geotiff_compression: Default: TRUE if output geotiff should be compressed (lossless,deflate level=9). FALSE for no compression.
+  #
+  # Returns:
+  #   Nothing, but status messages on the console
   
-  # Check Storage Location for RAW Modis Data (or set up a temporary folder) and output files and stop, if they do not exist. 
+  # Check argument modis_datastorage (or set up a temporary folder) and storage_location and stop, if they do not exist. 
   if (!isString(modis_datastorage)) {
     localArcPath <- file.path(tempdir(), "MODIS")
     dir.create(localArcPath)
@@ -431,12 +536,12 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
   }
 
   # Initialise MODIS package. 
-  MODISoptions(MODISserverOrder="LAADS",quiet=TRUE,localArcPath=localArcPath,outDirPath=storage_location) 
+  # MODISoptions(MODISserverOrder="LAADS",quiet=TRUE,localArcPath=localArcPath,outDirPath=storage_location) 
   
   # Check and Rearrange database list. Order dataframe such that subregions come last.
   if (!is.logical(database$store_geotiff) || any(is.na(database$store_geotiff))) {
     stop("Invalid entry in the database for store_geotiff. Only logicals (TRUE/FALSE) are allowed.")
-  } else if (!is.numeric(database$store_length) | !all(database$store_length>0, na.rm=TRUE)) {
+  } else if (!(is.numeric(database$store_length) | is.na(database$store_length)) | !all(database$store_length>0, na.rm=TRUE)) {
     stop("Invalid entry in the database for store_length. Only numerics (1,2,3,... or NA) are allowed.")
   } else if (!is.logical(database$cloud_correct) || any(is.na(database$cloud_correct))) {
     stop("Invalid entry in the database for cloud_correct. Only logicals (TRUE/FALSE) are allowed.")
@@ -453,7 +558,6 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
   } else if (!all(file.exists(as.character(database$shapefile)))) {
     stop("One or more of the shapefiles in the database do not exist. Make sure the pathname is correct")
   }
-  
   database <- database[order(database$is_subregion_of, na.last =  FALSE),] 
   
   # Resolve nested subregion dependancy to the last parentregion and check for circular dependancy
@@ -552,26 +656,30 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
         # fetch the entry of the parentregion if current entry is a subregion. 
         subregion <- as.character(database$is_subregion_of[i])
           
-        # If the current entry is a a subregion, fetch data from parent region datapath. Otherwise access MODIS FTP via MODIS package
+        # If the current entry is a a subregion, fetch data from parent region datapath. Otherwise access Online Dataserver
         if (isString(subregion)) {
           parentregion <- database[database$ID==subregion,]
           cat('... using data from PARENTREGION with ID ',as.character(parentregion$ID),' ...','\n',sep='')
           srcdatapath <- file.path(storage_location,as.character(parentregion$name))
-          rasterimages <- cropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, compression = geotiff_compression)
+          rasterimages <- cropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, geotiff_compression = geotiff_compression)
         } else {
-          cat('... using data from MODIS FTP server ...','\n',sep='')
-          rasterimages <- UpdateAndProcessMODIS(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, hdfstorage=modis_datastorage, compression=geotiff_compression) #Download&Process MODIS Data
+          cat('... using data from WEBSERVER ...','\n',sep='')
+          rasterimages <- ProcessMODIS(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, hdfstorage=modis_datastorage, geotiff_compression=geotiff_compression) #Download&Process MODIS Data
         }
         
-        # Add new observations to timeseries file and tag rasterimages, that are not anymore required.
-        if (!is.null(rasterimages)) {
+        if (nrow(rasterimages)==0) {
+          cat('No new data were found for ',name,'\n',sep='')
+        } else {
+          cat('POST-PROCESSING of new data for ',name,' ...','\n',sep='')
+          -
           # Get a list of all available rasterimages/geotiffs. Extract date vector from filenames and create dataframe with filename-date pairs.
           gtifffiles <- list.files(datapath, pattern = "\\.tif$", full.names = TRUE)
           dates=as.Date(sub(".tif","",basename(gtifffiles)))
           datainstorage = data.frame(file=gtifffiles, date=dates)
           
+          #if cloud_correct=TRUE; use last observation to fill in cloud gaps in the new observations.
           if (database$cloud_correct[i]) {
-            cat('Cloud Correcting Geotiff images ... ')
+            cat('Cloud Correcting Geotiff images ... \n')
             newdata = rasterimages[order(rasterimages$date, decreasing=FALSE),]
             olddata<-datainstorage[!(datainstorage$file %in% newdata$file),]
             if (nrow(olddata)>0) {
@@ -594,9 +702,9 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
             }
           }
           
-          
-          cat('Updating Time Series for ',name,' ...','\n',sep='')
+          # Update timeseries.csv file with new observations
           # Read any existing timeseries file, othwerwise create empty dataframe. Extract the dates from datainstorage, for which no entry in the timeseries exists.
+          cat('Updating Time Series ... \n')
           csvpath <- file.path(datapath,timeseries_filename)
           if (file.exists(csvpath)) {
             ts <- read.csv(csvpath,stringsAsFactors = FALSE, header = TRUE)
@@ -639,22 +747,21 @@ UpdateAndProcess <- function(database, storage_location, modis_datastorage=NULL,
               removefinally <- c(removefinally,as.character(datainstorage2remove$file)) 
             } 
           }
-        } else {
-          cat('No new data were found for ',name,'\n',sep='')
-        }
+        } 
         
       }
     }
+    # Delete temporary files after one DownloadChunk
     if (length(removefinally)>0) {
       file.remove(removefinally) 
     }
   }
 }
 
-# Read list of shapefiles
-database <- database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE, colClasses = c("character","character","character","character","logical","numeric","logical","character","character"), na.strings = "NA")
 
-UpdateAndProcess(database, storage_location=DATASTORAGE_LOC, modis_datastorage = MODIS_DATASTORAGE, max_download_chunk = maxDOWNLOADchunk)
+# Read list of shapefiles
+database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE)
+UpdateMODISData(database, storage_location=DATASTORAGE_LOC, modis_datastorage = MODIS_DATASTORAGE, max_download_chunk = maxDOWNLOADchunk)
   
   
 
