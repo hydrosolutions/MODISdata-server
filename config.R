@@ -5,3 +5,4 @@ DATABASE_LOC = "/home/jules/Desktop/MODIS_Service/example_database.csv"
 maxDOWNLOADchunk = 30
 TIMESERIES_DEFAULT_NAME = "timeseries.csv"
 GEOTIFF_COMPRESSION = FALSE
+GEOTIFF_PROCESSOR = "ProcessMODIS_10A1"
