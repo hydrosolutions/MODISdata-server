@@ -396,8 +396,6 @@ CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, crop
   availabledata <- availabledata[as.numeric(availabledata$date) %in% as.numeric(seq(from=daterange[1],to=daterange[2],by=1)),]
   
   output <- data.frame(file=c(),date = c())
-  outputdates=c()
-  outputfiles=c()
   
   if (nrow(availabledata)>0) {
     
@@ -421,12 +419,8 @@ CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, crop
     return(output)
   }
   
-  output=data.frame(file=outputfiles,date=outputdates)
-  if (nrow(output)==0) {
-    return(NULL)
-  } else {
-    return(output) 
-  }
+  return(output) 
+  
 }
 
 # Simple delper function to set the compress argument in gdal
