@@ -292,8 +292,11 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
               
               for (imagefile in newdata$file) {
                 r <- raster(imagefile)
+                mask <- (is.na(r))
                 r[r==-32767]=NA
                 r <- merge(r,old_r)
+                r[is.na(r)]<--32767
+                r[mask]=NA
                 old_r<-r
                 remove(r);gc()
                 writeRaster(old_r,filename=imagefile,format="GTiff",overwrite=TRUE, dataType="INT2S")
@@ -318,7 +321,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
               dates <- vector(mode='character',length=length(newtsdata[,1]))
               for (k in 1:length(values)) {
                 r <- raster(as.character(newtsdata$file[k]))
-                r[r==-32767]=NA
+                r[r<-32765]=NA
                 values[k]=mean(values(r), na.rm=TRUE)
                 dates[k]=as.character(newtsdata$date[k])
               }
