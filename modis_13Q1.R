@@ -153,8 +153,8 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
         evi2 <- evi
       } 
       evi<-raster(readGDAL(sds$SDS4gdal[2], as.is=TRUE, silent=TRUE))/100
-      evi[qualityband>1]<- -200
-      evi[is.na(evi)]<- -200
+      evi[qualityband>1]<- NA
+      evi[is.na(evi)]<- NA
       
       rm(qualityband);gc()
       
@@ -162,6 +162,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
         evi<-mosaic(evi,evi2,fun=mean) #mean of both rasters, na.rm=TRUE
       }
       
+      evi[is.na(evi)]<--32767
       writeRaster(evi,filename=GTifflist[i],format="GTiff",dataType="INT2S")
       rm(evi);gc()
       gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = crop_to_cutline, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
