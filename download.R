@@ -260,10 +260,10 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
           parentregion <- database[database$ID==subregion,]
           cat('... using data from PARENTREGION with ID ',as.character(parentregion$ID),' ...','\n',sep='')
           srcdatapath <- file.path(storage_location,as.character(parentregion$name))
-          rasterimages <- CropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, crop_to_cutline = cropoption, dstfolder = datapath, geotiff_compression = geotiff_compression)
+          rasterimages <- CropFromGeotiff(daterange = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, crop_to_cutline = cropoption, dstfolder = datapath, geotiff_compression = geotiff_compression)
         } else {
           cat('... using data from WEBSERVER ...','\n',sep='')
-          rasterimages <- Raw2Geotiff(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, crop_to_cutline = ,geotiff_compression=geotiff_compression) #Download&Process MODIS Data
+          rasterimages <- Raw2Geotiff(daterange = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, crop_to_cutline = ,geotiff_compression=geotiff_compression) #Download&Process MODIS Data
         }
         
         if (nrow(rasterimages)==0) {
