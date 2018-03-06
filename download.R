@@ -47,6 +47,7 @@ library(XML)
 library(R.utils)
 library(httr)
 
+
 ########### 1.FUNCTION DEFINITIONS ##############
 # The main function which organises and triggers the downloading and processing for all entries in the database
 UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_processor,timeseries_filename = "timeseries.csv", max_download_chunk=15, geotiff_compression = TRUE) {
@@ -156,6 +157,8 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
     stop("Invalid entry in the database for store_length. Only numerics (1,2,3,... or NA) are allowed.")
   } else if (!is.logical(database$cloud_correct) || any(is.na(database$cloud_correct))) {
     stop("Invalid entry in the database for cloud_correct. Only logicals (TRUE/FALSE) are allowed.")
+  } else if (!is.logical(database$crop_to_cutline) || any(is.na(database$crop_to_cutline))) {
+    stop("Invalid entry in the database for crop_to_cutline Only logicals (TRUE/FALSE) are allowed.")
   } else if (any(duplicated(database$ID))) {
     stop("The ID entries in the given database are not unique")
   } else if (any(duplicated(database$name))) {
@@ -266,23 +269,22 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
         
         # fetch the entry of the parentregion if current entry is a subregion. 
         subregion <- as.character(database$is_subregion_of[i])
-        
+        cropoption <- database$crop_to_cutline[i]
         # If the current entry is a a subregion, fetch data from parent region datapath. Otherwise access Online Dataserver
         if (isString(subregion)) {
           parentregion <- database[database$ID==subregion,]
           cat('... using data from PARENTREGION with ID ',as.character(parentregion$ID),' ...','\n',sep='')
           srcdatapath <- file.path(storage_location,as.character(parentregion$name))
-          rasterimages <- CropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, geotiff_compression = geotiff_compression)
+          rasterimages <- CropFromGeotiff(date = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, crop_to_cutline = cropoption, dstfolder = datapath, geotiff_compression = geotiff_compression)
         } else {
           cat('... using data from WEBSERVER ...','\n',sep='')
-          rasterimages <- ProcessMODIS_10A1(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, geotiff_compression=geotiff_compression) #Download&Process MODIS Data
+          rasterimages <- ProcessMODIS_10A1(date = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, crop_to_cutline = ,geotiff_compression=geotiff_compression) #Download&Process MODIS Data
         }
         
         if (nrow(rasterimages)==0) {
           cat('No new data were found for ',name,'\n',sep='')
         } else {
           cat('POST-PROCESSING of new data for ',name,' ...','\n',sep='')
-          -
             # Get a list of all available rasterimages/geotiffs. Extract date vector from filenames and create dataframe with filename-date pairs.
             gtifffiles <- list.files(datapath, pattern = "\\.tif$", full.names = TRUE)
             dates=as.Date(sub(".tif","",basename(gtifffiles)))
@@ -373,7 +375,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
 # ProcessMODIS_10A1 accesses the NSDIC HTTPS Server
 # ProcessMODIS_13Q1 acesses the LP DAAC and LAADS FTP Server
 # They can be adapted to work with other MODIS Products on those servers, but it requires some effort.
-ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, geotiff_compression=TRUE){
+ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, crop_to_cutline=TRUE, geotiff_compression=TRUE){
   # Download and Processes the MODIS data for the specified daterange and extent. Uses an internal download function to fetch data from NSDIC server
   #
   # Args:
@@ -385,8 +387,18 @@ ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NU
   #
   # Returns:
   #   data.frame(file=c(character()),date=c(date())): A dataframe that contains the full filename and date of the newly generated geotiff files.
+  # Helper function to convert tile names
+  tilestrings2tilevec <- function(tilestrings) {
+    out <- data.frame(h = c(), v = c())
+    for (string in tilestrings) {
+      h <- substr(string,2,3)
+      v <- substr(string,5,6)
+      out <- rbind(out,data.frame(h = h, v=v))
+    }
+    return(out)
+  }
   
-  DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, tileH, tileV, max_wait=300, checkIntegrity=FALSE) {
+  DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, tiles, max_wait=300, checkIntegrity=FALSE) {
     # Updates local MODIS MOD10A1/MYD10A1 files within the specified range
     #
     # Args:
@@ -403,23 +415,21 @@ ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NU
     #   a vector of the absolute path to all .hdf files, that are available in datapath within the specified range. Includes all files, not only those which have been downloaded.
     
     # Helper function to find local files
-    listHDFfiles <- function(product, datapath,tileH=NULL,tileV=NULL,begin=NULL,end=NULL) {
+    listHDFfiles <- function(product, datapath,tiles,begin=NULL,end=NULL) {
       # Searches a local folder for MODIS .hdf files within the specifications for product, tile and daterange
       #
       # Args:
       #   product: any MODIS product abbreviation as character, e.g. "MOD10A1" or "MYD10A1"
       #   tileH,tileV: The path where to search for files.
-      #   tileH, tileV: A vector with the tile numbers which should be downloaded. Each element in tileH corresponds to the element at the same index in tileV. 
-      #                 Both vectors must be of the same length. If NULL, any tiles will be selected.
+      #   tiles: A data.frame with h and v of the tiles which should be downloaded. 
       #   begin,end: the begin or end date within which files should be selected, e.g. as.Date(2017-01-01). If NULL, all files of any date will be selected.
       #
       # Returns:
       #  data.frame with rows (path, file, date) of all files that have been found
       
       # Concentate search pattern
-      tileHpattern <- paste(sprintf("%02d", tileH),collapse="|")
-      tileVpattern <- paste(sprintf("%02d", tileV),collapse="|")
-      pattern <- paste(product,".*h(",tileHpattern,")v(",tileVpattern,").*","\\.hdf$",sep="")
+      tilepattern <- paste(sprintf("%s", tiles),collapse="|")
+      pattern <- paste(product,".*(",tilepattern,").*","\\.hdf$",sep="")
       
       # Find files with specified pattern
       localfilesearch <- list.files(path=datapath, pattern=pattern, recursive = TRUE, full.names=TRUE)
@@ -441,6 +451,7 @@ ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NU
       return(localfiles)
     }
     
+
     # Helper function to check integrity of local files
     removeCorruptHDF <- function(path, prefix=NULL, max.deletions=Inf) {
       # Deletes all .hdf files in path that can not be properly read by gdalinfo as a HDF4 or HDF5 file.
@@ -495,19 +506,14 @@ ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NU
     begin <- daterange[1]
     end <- daterange[2]
     
-    if (!length(tileH)==length(tileV)) {
-      stop("Argument tileH and tileV must be of the same length.")
-    }
-    
     # get a list of available local files
-    localfiles <- listHDFfiles(product=product,datapath,tileH=tileH,tileV=tileV)
+    localfiles <- listHDFfiles(product=product,datapath,tiles)
     
     # get available online files. Start at webserver root and fetch all links from index.html.
     # Webserver structure is: root/YYYY.MM.DD/****.hdf
     cat("Browsing the webserver file structure for new files in ",baselink,"\n")
-    tileHpattern <- paste(sprintf("%02d", tileH),collapse="|")
-    tileVpattern <- paste(sprintf("%02d", tileV),collapse="|")
-    pattern <- paste(product,".*h(",tileHpattern,")v(",tileVpattern,").*","\\.hdf$",sep="")
+    tilepattern <- paste(sprintf("%s", tiles),collapse="|")
+    pattern <- paste(product,".*(",tilepattern,").*","\\.hdf$",sep="")
     links <- xpathSApply(htmlParse(out), "//a/@href")
     links <- unname(links[!duplicated(links)])
     
@@ -552,7 +558,7 @@ ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NU
     }
     
     # Compile a list of all file in datapath that fit into the specified range for product, daterange and tile
-    availablefile <- listHDFfiles(product=product,datapath,tileH=tileH,tileV=tileV, begin=begin, end=end)
+    availablefile <- listHDFfiles(product=product,datapath,tiles=tiles, begin=begin, end=end)
     return(as.vector(availablefile$path))
   }
   
@@ -600,15 +606,15 @@ ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NU
   myshp <- readOGR(shapefilepath, verbose=FALSE)
   e <- extent(myshp)
   tile <- getTile(e)
-  
+
   # Try MODIS Aqua first
   collection="006"
   x='MYD10A1'
-  out1=tryCatch(DownloadFromNSIDC(product=x,datapath=localArcPath,daterange=daterange,tileH=tile@tileH,tileV=tile@tileV), error = function(e) {NULL})
+  out1=tryCatch(DownloadFromNSIDC(product=x,datapath=localArcPath,daterange=daterange,tiles=tile@tile), error = function(e) {NULL})
   
   # Then MODIS Terra
   x='MOD10A1'
-  out2=tryCatch(DownloadFromNSIDC(product=x,collection=collection,datapath=localArcPath,daterange=daterange,tileH=tile@tileH,tileV=tile@tileV), error = function(e) {NULL})
+  out2=tryCatch(DownloadFromNSIDC(product=x,collection=collection,datapath=localArcPath,daterange=daterange,tiles=tile@tile), error = function(e) {NULL})
   
   # Merge lists of downloaded HDF Tiles
   files <- c(out1,out2)
@@ -674,7 +680,7 @@ ProcessMODIS_10A1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NU
       
       writeRaster(evi,filename=GTifflist[i],format="GTiff",overwrite=TRUE, dataType="INT1S")
       rm(evi);gc()
-      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
+      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = crop_to_cutline, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
     }
   
   # In case all Tiles of the current date are valid, mosaic them to one Gtiff File
@@ -848,7 +854,7 @@ ProcessMODIS_13Q1 <- function(daterange, shapefilepath, dstfolder, srcstorage=NU
   }
 }
 
-CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geotiff_compression=FALSE) {
+CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, crop_to_cutline=TRUE, geotiff_compression=FALSE) {
   # Uses existing geotiff data files to produce the geotiffs for the specified shapefile
   #
   # Args:
@@ -880,9 +886,9 @@ CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geot
   
   gtifffiles = list.files(srcfolder, pattern = "\\.tif$", full.names = TRUE)
   dates=as.Date(sub(".tif","",basename(gtifffiles)))
-  availabledata = data.frame(gtifffiles, dates)
+  availabledata = data.frame(file=gtifffiles, date=dates)
   
-  availabledata <- availabledata[as.numeric(availabledata$dates) %in% as.numeric(seq(from=daterange[1],to=daterange[2],by=1)),]
+  availabledata <- availabledata[as.numeric(availabledata$date) %in% as.numeric(seq(from=daterange[1],to=daterange[2],by=1)),]
   
   output <- data.frame(file=c(),date = c())
   outputdates=c()
@@ -892,20 +898,20 @@ CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geot
     
     # Check if bounding box of destination is within bbox of source
     shp <- readOGR(shapefilepath, verbose=FALSE)
-    r <- raster(as.character(availabledata$gtifffiles[1]))
+    r <- raster(as.character(availabledata$file[1]))
     ispartof <- isPartOfExtent(extent(r),extent(shp))
     rm(r,shp)
     gc()
     if (ispartof) {
       for (i in 1:nrow(availabledata)) {
-        srcfile <- availabledata$gtifffiles[i]
-        dstfile <- file.path(dstfolder,paste(availabledata$dates[i],'.tif',sep=''))
+        srcfile <- availabledata$file[i]
+        dstfile <- file.path(dstfolder,paste(availabledata$date[i],'.tif',sep=''))
         cat('Processing ... ',as.character(srcfile),'\n',sep='')
-        gdalwarp(srcfile=srcfile,dstfile=dstfile,cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326",co=compressionmethod)
-        output <- rbind(output,data.frame(file=dstfile,date=as.Date(as.character(availabledata$dates[i]))))
+        gdalwarp(srcfile=srcfile,dstfile=dstfile,cutline=shapefilepath,crop_to_cutline = crop_to_cutline, t_srs="EPSG:4326",co=compressionmethod)
+        output <- rbind(output,data.frame(file=dstfile,date=as.Date(as.character(availabledata$date[i]))))
       } 
     } else {
-      warning(paste(shapefilepath,"is not within the bounding box of",availabledata$gtifffiles[1]),sep=" ")
+      warning(paste(shapefilepath,"is not within the bounding box of",availabledata$file[1]),sep=" ")
     }
     return(output)
   }
