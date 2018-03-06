@@ -325,6 +325,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
         } 
         evi<-raster(readGDAL(sds$SDS4gdal[1], as.is=TRUE, silent=TRUE))
         
+        evi[evi==237 | evi==239] <- -32766 ##water mask
         evi[mask > 2 | is.na(evi) | evi>100]<- NA
         evi[evi>0] <- 0.06+1.21*evi[evi>0] # https://www.sciencedirect.com/science/article/pii/S0034425703002864
         evi[evi>100] <- 100
