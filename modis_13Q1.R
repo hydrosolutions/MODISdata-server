@@ -106,7 +106,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
   files <- c(unname(unlist(out1)),unname(unlist(out2)))
   
   # abort when nothing has been downloaded or the number of downlaoded tiles does not coincide with the number of required tiles for this shapefile
-  if ((length(files) %% length(tile@tileH)*length(tile@tileV)) > 0) {
+  if ((length(files) %% length(tile@tile)) > 0) {
     setwd(oldwd)
     return(output) 
   } else if (length(files)==0) {
