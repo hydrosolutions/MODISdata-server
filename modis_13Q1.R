@@ -161,13 +161,15 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
       if (j>1) {
         evi<-mosaic(evi,evi2,fun=mean) #mean of both rasters, na.rm=TRUE
       }
+      }
+      
       
       evi[is.na(evi)]<--32767
       writeRaster(evi,filename=GTifflist[i],format="GTiff",dataType="INT2S")
       rm(evi);gc()
       gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = crop_to_cutline, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
-      
-      }
+    }
+
     
     
     # In case all Tiles of the current date are valid, mosaic them to one Gtiff File
@@ -176,7 +178,6 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
       dstfile <- file.path(dstfolder,filename)
       mosaic_rasters(GTifflist2,dstfile,co=compressionmethod, ot="Int16")  #
       output <- rbind(output,data.frame(file=dstfile,date=as.Date(HDFlist$date[i]))) #TODO, date format correct?
-     }
     }
   }
   

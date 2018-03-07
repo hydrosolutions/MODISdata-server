@@ -321,7 +321,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
               dates <- vector(mode='character',length=length(newtsdata[,1]))
               for (k in 1:length(values)) {
                 r <- raster(as.character(newtsdata$file[k]))
-                r[r<-32765]=NA
+                r[r==-32766 | r==-32767]=NA  #remove cloud, water mask
                 values[k]=mean(values(r), na.rm=TRUE)
                 dates[k]=as.character(newtsdata$date[k])
               }
