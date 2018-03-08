@@ -263,7 +263,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
           rasterimages <- CropFromGeotiff(daterange = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, crop_to_cutline = cropoption, dstfolder = datapath, geotiff_compression = geotiff_compression)
         } else {
           cat('... using data from WEBSERVER ...','\n',sep='')
-          rasterimages <- Raw2Geotiff(daterange = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, crop_to_cutline = ,geotiff_compression=geotiff_compression) #Download&Process MODIS Data
+          rasterimages <- Raw2Geotiff(daterange = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, crop_to_cutline = cropoption,geotiff_compression=geotiff_compression) #Download&Process MODIS Data
         }
         
         if (nrow(rasterimages)==0) {
@@ -299,7 +299,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
                 r[mask]=NA
                 old_r<-r
                 remove(r);gc()
-                writeRaster(old_r,filename=imagefile,format="GTiff",overwrite=TRUE, dataType="INT2S")
+                writeRaster(old_r,filename=imagefile,format="GTiff",overwrite=TRUE, datatype="INT2S",NAflag=-32768,options=GenerateCompressionArgument(TRUE))
               }
             }
             

@@ -165,7 +165,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
       
       
       evi[is.na(evi)]<--32767
-      writeRaster(evi,filename=GTifflist[i],format="GTiff",dataType="INT2S")
+      writeRaster(evi,filename=GTifflist[i],format="GTiff",datatype="INT2S",NAflag=-32768)
       rm(evi);gc()
       gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = crop_to_cutline, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
     }
