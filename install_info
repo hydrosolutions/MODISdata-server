@@ -1,0 +1,5 @@
+sudo apt-get install r-base-dev
+
+
+
+pip install flask, rpy2==2.7.2

@@ -94,7 +94,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
     # Returns:
     #   a vector of TRUE or FALSE
     
-    sapply(value, FUN = function(x) {
+    sapply(value, USE.NAMES = FALSE, FUN = function(x) {
       if (is.na(x) || is.null(x) || x == "") {
         return(FALSE)
       } else {
@@ -111,11 +111,62 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
     # Returns:
     #   a vector of TRUE or FALSE
     
-    sapply(value, FUN = function(x) {
+    sapply(value, USE.NAMES = FALSE, FUN = function(x) {
       tryCatch({as.Date(x);TRUE}, error = function(e) {FALSE})
     })
   }
   
+  DatabaseHandler <- function(database) {
+    # Checks if database is valid, otherwise stops execution with error message. Also rearranges database and solves nested subregions
+    #
+    # Args:
+    #   database: the database table
+    # Returns:
+    #   checked and rearranged database
+    
+    if (any(duplicated(database$ID))) {
+      stop("The ID entries in the given database are not unique")
+    } else if (any(duplicated(database$name))) {
+      stop("The name entries in the given database are not unique")
+    }
+    
+    for (i in 1:nrow(database)) {
+      # Check valid datatypes of all entries
+      if (!is.logical(database$store_geotiff[i]) || is.na(database$store_geotiff[i])) {
+        stop("Invalid entry in the database for store_geotiff. Only logicals (TRUE/FALSE) are allowed.")
+      } else if ((!is.na(database$store_length[i]) & !(is.numeric(database$store_length[i]) && database$store_length[i]>0))) {
+        stop("Invalid entry in the database for store_length. Only numerics (1,2,3,... or NA) are allowed.")
+      } else if (!is.logical(database$cloud_correct[i]) || is.na(database$cloud_correct[i])) {
+        stop("Invalid entry in the database for cloud_correct. Only logicals (TRUE/FALSE) are allowed.")
+      } else if (!isDate(database$earliestdate[i])) {
+        stop("The entries for earliestdate must be of format YYYY-MM-DD or NA (NA -> as far back in time as possibe)")
+      } else if (!isDate(database$latestdate[i])) {
+        stop("The entries for latestdate must be of format YYYY-MM-DD or NA (NA -> today")
+      } else if (!is.na(database$is_subregion_of[i]) & !database$is_subregion_of[i] %in% database$ID) {
+        stop("One or more entries for is_subregion_of do not have a correspondend entry for a parent region")
+      } else if (!file.exists(as.character(database$shapefile[i]))) {
+        stop("One or more of the shapefiles in the database do not exist. Make sure the pathname is correct")
+      }
+      
+      # Resolve nested subregion dependancy to the last parentregion and check for circular dependancy
+      parentregion=data.frame()
+      subregion <- as.character(database$is_subregion_of[i])
+      subregionlist <- c(subregion)
+      while (isString(subregion)) {
+        parentregion <- database[database$ID==subregion,]
+        subregion <- as.character(parentregion$is_subregion_of)
+        subregionlist <- c(subregionlist,subregion)
+        if (any(duplicated(subregionlist))) {
+          stop("There is a circular dependancy of subregions!")
+        }
+      }
+      if (nrow(parentregion)==1) {
+        database$is_subregion_of[i] <- as.character(parentregion$ID)
+      }
+    }
+    database <- database[order(database$is_subregion_of, na.last =  FALSE),] 
+    return(database)
+  }
   
   # Check argument modis_datastorage (or set up a temporary folder) and storage_location and stop, if they do not exist. 
   if (!isString(srcstorage)) {
@@ -135,45 +186,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
   # Initialise MODIS package. 
   # MODISoptions(MODISserverOrder="LAADS",quiet=TRUE,localArcPath=localArcPath,outDirPath=storage_location) 
   
-  # Check and Rearrange database list. Order dataframe such that subregions come last.
-  if (!is.logical(database$store_geotiff) || any(is.na(database$store_geotiff))) {
-    stop("Invalid entry in the database for store_geotiff. Only logicals (TRUE/FALSE) are allowed.")
-  } else if (!(is.numeric(database$store_length) | is.na(database$store_length)) | !all(database$store_length>0, na.rm=TRUE)) {
-    stop("Invalid entry in the database for store_length. Only numerics (1,2,3,... or NA) are allowed.")
-  } else if (!is.logical(database$cloud_correct) || any(is.na(database$cloud_correct))) {
-    stop("Invalid entry in the database for cloud_correct. Only logicals (TRUE/FALSE) are allowed.")
-  } else if (any(duplicated(database$ID))) {
-    stop("The ID entries in the given database are not unique")
-  } else if (any(duplicated(database$name))) {
-    stop("The name entries in the given database are not unique")
-  } else if (!isDate(database$earliestdate)) {
-    stop("The entries for earliestdate must be of format YYYY-MM-DD or NA (NA -> as far back in time as possibe)")
-  } else if (!isDate(database$latestdate)) {
-    stop("The entries for latestdate must be of format YYYY-MM-DD or NA (NA -> today")
-  } else if (!all(database$is_subregion_of[isString(database$is_subregion_of)] %in% database$ID)) {
-    stop("One or more entries for is_subregion_of do not have a correspondend entry for a parent region")
-  } else if (!all(file.exists(as.character(database$shapefile)))) {
-    stop("One or more of the shapefiles in the database do not exist. Make sure the pathname is correct")
-  }
-  database <- database[order(database$is_subregion_of, na.last =  FALSE),] 
-  
-  # Resolve nested subregion dependancy to the last parentregion and check for circular dependancy
-  for (i in 1:nrow(database)) {
-    parentregion=data.frame()
-    subregion <- as.character(database$is_subregion_of[i])
-    subregionlist <- c(subregion)
-    while (isString(subregion)) {
-      parentregion <- database[database$ID==subregion,]
-      subregion <- as.character(parentregion$is_subregion_of)
-      subregionlist <- c(subregionlist,subregion)
-      if (any(duplicated(subregionlist))) {
-        stop("There is a circular dependancy of subregions!")
-      }
-    }
-    if (nrow(parentregion)==1) {
-      database$is_subregion_of[i] <- as.character(parentregion$ID)
-    }
-  }
+  database <- DatabaseHandler(database)
   
   # Find the latest observation for each database entry
   # Earliest date is either the entry in the database if no geotiffs or timeseries is found in the datapath. Otherwise the latest observation 
