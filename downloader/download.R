@@ -6,7 +6,7 @@
 cmd = TRUE
 try({
   setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-  source('examplefiles/config.R')
+  source('/home/jules/Desktop/Hydromet/MODISsnow_server/config.R')
   cmd = FALSE
   }, silent = TRUE
 )
@@ -234,6 +234,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
     removefinally <- c() # Empty character vector that collects temporary files, that are not required anymore
     for (i in 1:nrow(database)) {
       ID <- as.character(database$ID[i])
+      name=as.character(database$name[i])
       
       # if startdate of database entry is within downloadchunk window, begin updating data
       # crop daterange if shapefiles startdate/enddate is later/earlier than startdate/enddate of downloadchunk
@@ -252,7 +253,6 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
         
         # concentate datapath from entry name and storage location.
         # Create folder if does not yet exist
-        name=as.character(database$name[i])
         datapath <- file.path(storage_location,name)
         if (!dir.exists(datapath)) {
           dir.create(datapath, recursive=TRUE)
@@ -360,7 +360,10 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
             }
         } 
         
-      }
+      
+      } else {
+        cat('Data is already up-to-date for ',name,'\n',sep='')
+        }
     }
     # Delete temporary files after one DownloadChunk
     if (length(removefinally)>0) {
