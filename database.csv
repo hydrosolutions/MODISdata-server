@@ -1,2 +1,0 @@
-ID,name,shapefile,is_subregion_of,crop_to_cutline,store_geotiff,store_length,cloud_correct,earliestdate,latestdate
-CA,Central_Asia,/home/jules/MODIS_Service/shapefiles/CA.shp,NA,FALSE,TRUE,NA,FALSE,2018-01-01,2018-01-02

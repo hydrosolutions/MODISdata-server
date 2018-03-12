@@ -52,7 +52,7 @@ isvalidHDF_4_5 <- function(filename) {
 # ProcessMODIS_13Q1 acesses the LP DAAC and LAADS FTP Server
 # They can be adapted to work with other MODIS Products on those servers, but it requires some effort.
 
-Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, crop_to_cutline=TRUE, geotiff_compression=TRUE){
+Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, geotiff_compression=TRUE){
   # Download and Processes the MODIS data for the specified daterange and extent. Uses the MODIS package for download from LP DAAC and LAADS.
   #
   # Args:
@@ -165,9 +165,10 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
       
       
       evi[is.na(evi)]<--32767
-      writeRaster(evi,filename=GTifflist[i],format="GTiff",datatype="INT2S",NAflag=-32768)
+      writeRaster(evi,filename=GTifflist[i],format="GTiff",datatype="INT2S",NAflag=-32768
+      )
       rm(evi);gc()
-      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = crop_to_cutline, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
+      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
     }
 
     

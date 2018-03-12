@@ -142,8 +142,6 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
     stop("Invalid entry in the database for store_length. Only numerics (1,2,3,... or NA) are allowed.")
   } else if (!is.logical(database$cloud_correct) || any(is.na(database$cloud_correct))) {
     stop("Invalid entry in the database for cloud_correct. Only logicals (TRUE/FALSE) are allowed.")
-  } else if (!is.logical(database$crop_to_cutline) || any(is.na(database$crop_to_cutline))) {
-    stop("Invalid entry in the database for crop_to_cutline Only logicals (TRUE/FALSE) are allowed.")
   } else if (any(duplicated(database$ID))) {
     stop("The ID entries in the given database are not unique")
   } else if (any(duplicated(database$name))) {
@@ -254,16 +252,15 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
         
         # fetch the entry of the parentregion if current entry is a subregion. 
         subregion <- as.character(database$is_subregion_of[i])
-        cropoption <- database$crop_to_cutline[i]
         # If the current entry is a a subregion, fetch data from parent region datapath. Otherwise access Online Dataserver
         if (isString(subregion)) {
           parentregion <- database[database$ID==subregion,]
           cat('... using data from PARENTREGION with ID ',as.character(parentregion$ID),' ...','\n',sep='')
           srcdatapath <- file.path(storage_location,as.character(parentregion$name))
-          rasterimages <- CropFromGeotiff(daterange = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, crop_to_cutline = cropoption, dstfolder = datapath, geotiff_compression = geotiff_compression)
+          rasterimages <- CropFromGeotiff(daterange = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, geotiff_compression = geotiff_compression)
         } else {
           cat('... using data from WEBSERVER ...','\n',sep='')
-          rasterimages <- Raw2Geotiff(daterange = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, crop_to_cutline = cropoption,geotiff_compression=geotiff_compression) #Download&Process MODIS Data
+          rasterimages <- Raw2Geotiff(daterange = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, geotiff_compression=geotiff_compression) #Download&Process MODIS Data
         }
         
         if (nrow(rasterimages)==0) {
@@ -359,7 +356,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
   }
 }
 
-CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, crop_to_cutline=TRUE, geotiff_compression=FALSE) {
+CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geotiff_compression=FALSE) {
   # Uses existing geotiff data files to produce the geotiffs for the specified shapefile
   #
   # Args:
@@ -410,7 +407,7 @@ CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, crop
         srcfile <- availabledata$file[i]
         dstfile <- file.path(dstfolder,paste(availabledata$date[i],'.tif',sep=''))
         cat('Processing ... ',as.character(srcfile),'\n',sep='')
-        gdalwarp(srcfile=srcfile,dstfile=dstfile,cutline=shapefilepath,crop_to_cutline = crop_to_cutline, t_srs="EPSG:4326",co=compressionmethod)
+        gdalwarp(srcfile=srcfile,dstfile=dstfile,cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326",co=compressionmethod)
         output <- rbind(output,data.frame(file=dstfile,date=as.Date(as.character(availabledata$date[i]))))
       } 
     } else {

@@ -212,7 +212,7 @@ DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, ti
 # 1.Step: Compare local RAW data files with online storage/ 2.Step: Download new RAW files/ 3. Process RAW files to geotiffs
 # ProcessMODIS_10A1 accesses the NSDIC HTTPS Server
 # They can be adapted to work with other MODIS Products on those servers, but it requires some effort.
-Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, crop_to_cutline=TRUE, geotiff_compression=TRUE){
+Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, geotiff_compression=TRUE){
   # Download and Processes the MODIS data for the specified daterange and extent. Uses an internal download function to fetch data from NSDIC server
   #
   # Args:
@@ -263,7 +263,6 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
   myshp <- readOGR(shapefilepath, verbose=FALSE)
   e <- extent(myshp)
   tile <- getTile(e)
-  
   # Try MODIS Aqua first
   collection="006"
   x='MYD10A1'
@@ -340,7 +339,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, cr
       evi[is.na(evi) & watermask]<--32766
       writeRaster(evi,filename=GTifflist[i],format="GTiff",overwrite=TRUE, datatype="INT2S",NAflag=-32768)
       rm(evi,cloudmask,watermask);gc()
-      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = crop_to_cutline, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
+      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
     }
     
     # In case all Tiles of the current date are valid, mosaic them to one Gtiff File
