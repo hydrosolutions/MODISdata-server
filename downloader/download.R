@@ -120,7 +120,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
   # Check argument modis_datastorage (or set up a temporary folder) and storage_location and stop, if they do not exist. 
   if (!isString(srcstorage)) {
     localArcPath <- file.path(tempdir(), "MODIS")
-    dir.create(localArcPath)
+    dir.create(localArcPath, recursive = TRUE)
     cat("Persistent Storage of MODIS RAW Data is turned off. Configurate MODIS_DATASTORAGE to a valid path to enable it.")
   } else if (dir.exists(srcstorage)) {
     localArcPath <- srcstorage
@@ -383,7 +383,7 @@ CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geot
   compressionmethod <- GenerateCompressionArgument(geotiff_compression)
   
   if (!dir.exists(dstfolder)) {
-    dir.create(dstfolder)
+    dir.create(dstfolder, recursive = TRUE)
   }
   
   gtifffiles = list.files(srcfolder, pattern = "\\.tif$", full.names = TRUE)

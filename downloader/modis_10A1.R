@@ -140,7 +140,7 @@ DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, ti
   # Check if datapath exists, or else create it. Check file validity if argument checkIntegrity=TRUE
   datapath <- file.path(datapath,"MODIS",product.collection)
   if (!dir.exists(datapath)) {
-    dir.create(datapath)
+    dir.create(datapath, recursive=TRUE)
   } else if (checkIntegrity) {
     removeCorruptHDF(datapath, product=product, max.deletions=Inf)
   }
@@ -188,7 +188,7 @@ DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, ti
     for (i in 1:nrow(newfiles)) {
       savepath <- file.path(datapath,format(newfiles$date[i],format="%Y.%m.%d"))
       if (!dir.exists(savepath)) {
-        dir.create(savepath)
+        dir.create(savepath, recursive=TRUE)
       }
       dstfile <- file.path(savepath,newfiles$file[i])
       filelink <- as.character(newfiles$link[i])
@@ -254,7 +254,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
   } 
   
   if (!dir.exists(dstfolder)) {
-    dir.create(dstfolder)
+    dir.create(dstfolder, recursive = TRUE)
   }
   
   output=data.frame(file=c(),date=c())
