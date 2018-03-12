@@ -1,0 +1,4 @@
+ID,name,shapefile,is_subregion_of,store_geotiff,store_length,cloud_correct,earliestdate,latestdate
+KG,Kyrgyzstan,/home/jules/MODIS_Service/shapefiles/KGZ_adm0.shp,CAB,FALSE,NA,TRUE,2018-01-01,2018-01-15
+CAB,CA_Basins,/home/jules/MODIS_Service/shapefiles/CA_basins_clipped.shp,NA,TRUE,NA,FALSE,2018-01-01,2018-01-15
+VK,Vaksh,/home/jules/MODIS_Service/shapefiles/border_vahsh.shp,CAB,TRUE,NA,TRUE,2018-01-01,2018-01-15
