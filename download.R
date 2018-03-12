@@ -6,7 +6,7 @@
 cmd = TRUE
 try({
   setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-  source('config.R')
+  source('examplefiles/config.R')
   cmd = FALSE
   }, silent = TRUE
 )

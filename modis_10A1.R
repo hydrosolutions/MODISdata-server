@@ -323,11 +323,11 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
         } 
         evi<-raster(readGDAL(sds$SDS4gdal[1], as.is=TRUE, silent=TRUE))
         
-        watermask <- (evi==237 | evi==239) 
+        watermask <-  (qualitymask == 239) | ((raster(readGDAL(sds$SDS4gdal[3], as.is=TRUE, silent=TRUE)) %% 2) == 1)
         cloudmask <- (qualitymask > 2 | is.na(evi) | evi>100)
         evi[watermask | cloudmask] <- NA
-        evi[evi>0] <- 0.06+1.21*evi[evi>0] # https://www.sciencedirect.com/science/article/pii/S0034425703002864
-        evi[evi>100] <- 100
+        #evi[evi>0] <- 0.06+1.21*evi[evi>0] # https://www.sciencedirect.com/science/article/pii/S0034425703002864
+        #evi[evi>100] <- 100
         
         rm(qualitymask);gc()
         if (j>1) {
