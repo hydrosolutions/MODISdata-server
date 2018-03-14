@@ -6,7 +6,7 @@
 cmd = TRUE
 try({
   setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
-  source('/home/jules/Desktop/Hydromet/MODISsnow_server/config.R')
+  source('/home/jules/Desktop/Hydromet/MODISsnow_server/MODISsnow-server/downloader/examplefiles/config.R')
   cmd = FALSE
   }, silent = TRUE
 )
@@ -32,6 +32,7 @@ if (cmd) {
 }  
 
 source(GEOTIFF_PROCESSOR)
+library(elevatr)
 
 ########### 1.FUNCTION DEFINITIONS ##############
 # The main function which organises and triggers the downloading and processing for all entries in the database
@@ -136,8 +137,12 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
         stop("Invalid entry in the database for store_geotiff. Only logicals (TRUE/FALSE) are allowed.")
       } else if ((!is.na(database$store_length[i]) & !(is.numeric(database$store_length[i]) && database$store_length[i]>0))) {
         stop("Invalid entry in the database for store_length. Only numerics (1,2,3,... or NA) are allowed.")
+      } else if ((!is.na(database$elev_split[i]) & !(is.numeric(database$elev_split[i]) && database$elev_split[i]>0))) {
+        stop("Invalid entry in the database for elev_split. Only numerics (1,2,3,... or NA) are allowed.")
       } else if (!is.logical(database$cloud_correct[i]) || is.na(database$cloud_correct[i])) {
         stop("Invalid entry in the database for cloud_correct. Only logicals (TRUE/FALSE) are allowed.")
+      } else if (!is.logical(database$timeseries[i]) || is.na(database$timeseries[i])) {
+        stop("Invalid entry in the database for timeseries. Only logicals (TRUE/FALSE) are allowed.")
       } else if (!isDate(database$earliestdate[i])) {
         stop("The entries for earliestdate must be of format YYYY-MM-DD or NA (NA -> as far back in time as possibe)")
       } else if (!isDate(database$latestdate[i])) {
@@ -287,7 +292,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
             
             #if cloud_correct=TRUE; use last observation to fill in cloud gaps in the new observations.
             if (database$cloud_correct[i]) {
-              cat('Cloud Correcting Geotiff images ... \n')
+              cat('Cloud Correcting Geotiff images ...')
               newdata = rasterimages[order(rasterimages$date, decreasing=FALSE),]
               olddata<-datainstorage[!(datainstorage$file %in% newdata$file),]
               if (nrow(olddata)>0) {
@@ -300,7 +305,9 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
               
               old_r[old_r==-32767]<-NA
               
-              for (imagefile in newdata$file) {
+              for (a in 1:length(newdata$file)) {
+                cat('..',a,sep="")
+                imagefile <- as.character(newdata$file[a])
                 r <- raster(imagefile)
                 mask <- (is.na(r))
                 r[r==-32767]=NA
@@ -311,34 +318,70 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
                 remove(r);gc()
                 writeRaster(old_r,filename=imagefile,format="GTiff",overwrite=TRUE, datatype="INT2S",NAflag=-32768,options=GenerateCompressionArgument(TRUE))
               }
+              cat('..Done! \n')
             }
             
             # Update timeseries.csv file with new observations
             # Read any existing timeseries file, othwerwise create empty dataframe. Extract the dates from datainstorage, for which no entry in the timeseries exists.
-            cat('Updating Time Series ... \n')
-            csvpath <- file.path(datapath,timeseries_filename)
-            if (file.exists(csvpath)) {
-              ts <- read.csv(csvpath,stringsAsFactors = FALSE, header = TRUE)
-              newtsdata <- datainstorage[!as.Date(datainstorage$date) %in% as.Date(ts$date),]
+            
+            # If required, check if DEM exists, otherwise fetch and save it
+            if (!is.na(database$elev_split[i]) & database$timeseries[i]) {
+              cat('Elevation Splitting is activated: ')
+              dempath <- file.path(datapath,"dem.grd")
+              if (!file.exists(dempath)) {
+                cat('Downloading DEM data for the first time\n')
+                r <- raster(gtifffiles[1])
+                dem <- get_elev_raster(locations=r,z=9,src="aws")
+                dem_resampled <- raster::resample(dem, r)
+                rm(r,dem); gc()
+                writeRaster(dem_resampled, dempath)
+              } else {
+                dem_resampled<- raster(dempath)
+              }
+              stepsize <- database$elev_split[i]
+              min <- floor(min(values(dem_resampled))/stepsize)*stepsize
+              max <- ceiling(max(values(dem_resampled))/stepsize)*stepsize
+              alt_steps <- seq(min,max,by=stepsize)
             } else {
-              ts <- data.frame()
-              newtsdata <- datainstorage
+              alt_steps <- NA
             }
             
-            # if new data for timeseries are available, read the corresponding rasterimages and add value to the timeseries.
-            if (nrow(newtsdata)>0) {
-              values <- vector(mode="numeric", length=length(newtsdata[,1]))
-              dates <- vector(mode='character',length=length(newtsdata[,1]))
-              for (k in 1:length(values)) {
-                r <- raster(as.character(newtsdata$file[k]))
-                r[r==-32766 | r==-32767]=NA  #remove cloud, water mask
-                values[k]=mean(values(r), na.rm=TRUE)
-                dates[k]=as.character(newtsdata$date[k])
+            if (database$timeseries[i]) {
+              cat('Updating Time Series ...')
+              csvpath <- file.path(datapath,timeseries_filename)
+              if (file.exists(csvpath)) {
+                ts <- read.csv(csvpath,stringsAsFactors = FALSE, header = TRUE)
+                newtsdata <- datainstorage[!as.Date(datainstorage$date) %in% as.Date(ts$date),]
+              } else {
+                ts <- data.frame(matrix(nrow=0, ncol=length(alt_steps)))
+                newtsdata <- datainstorage
               }
-              ts <- rbind(ts,data.frame(date=dates,value=values))
-              ts = ts[order(ts$date, decreasing=FALSE),]
-              write.csv(ts,file=csvpath,row.names=FALSE) 
+              
+              # if new data for timeseries are available, read the corresponding rasterimages and add value to the timeseries.
+              if (nrow(newtsdata)>0) {
+                for (k in 1:length(newtsdata[,1])) {
+                  cat('..',k,sep="")
+                  r <- raster(as.character(newtsdata$file[k]))
+                  r[r==-32766 | r==-32767]=NA  #remove cloud, water mask
+                  values <- c()
+                  values[1]=mean(values(r), na.rm=TRUE)
+                  date=as.character(newtsdata$date[k])
+                  for (p in seq_along(alt_steps[-1])) { 
+                    min <- alt_steps[p]
+                    max <- alt_steps[p+1]
+                    r_masked <- mask(r, (dem_resampled >= min & dem_resampled < max),maskvalue=FALSE)
+                    values[p+1] <- mean(values(r_masked), na.rm=TRUE)
+                  }
+                  ts_new <- data.frame(date,t(values))
+                  names(ts_new) <- c("date","value",sapply(seq(alt_steps[-1]),FUN <- function(x) {paste("value",alt_steps[x],alt_steps[x+1],sep=".")}))
+                  ts <- rbind(ts, ts_new)
+                }
+                ts = ts[order(ts$date, decreasing=FALSE),]
+                write.csv(ts,file=csvpath,row.names=FALSE) 
+                cat('..Done! \n')
+              }
             }
+            
             
             # Add rasterimages that shall not be stored and are thus no longer required after the current download/daterangechunk to the vector removefinally.
             # If cloud correct is activated, keep the most recent rasterimage, even if store_geotiff is set to FALSE
@@ -362,7 +405,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
         
       
       } else {
-        cat('Data is already up-to-date for ',name,'\n',sep='')
+        cat('\n############### Data is already up-to-date for ',name,'\n',sep='')
         }
     }
     # Delete temporary files after one DownloadChunk
