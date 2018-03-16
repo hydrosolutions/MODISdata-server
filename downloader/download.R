@@ -373,7 +373,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
                     values[p+1] <- mean(values(r_masked), na.rm=TRUE)
                   }
                   ts_new <- data.frame(date,t(values))
-                  names(ts_new) <- c("date","value",sapply(seq(alt_steps[-1]),FUN <- function(x) {paste("value",alt_steps[x],alt_steps[x+1],sep=".")}))
+                  names(ts_new) <- c("date","value.-inf.inf",sapply(seq(alt_steps[-1]),FUN <- function(x) {paste("value",alt_steps[x],alt_steps[x+1],sep=".")}))
                   ts <- rbind(ts, ts_new)
                 }
                 ts = ts[order(ts$date, decreasing=FALSE),]
