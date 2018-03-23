@@ -33,14 +33,15 @@ if (cmd) {
 
 source(GEOTIFF_PROCESSOR)
 library(elevatr)
+library(RSQLite)
 
 ########### 1.FUNCTION DEFINITIONS ##############
 # The main function which organises and triggers the downloading and processing for all entries in the database
-UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_processor,timeseries_filename = "timeseries.csv", max_download_chunk=15, geotiff_compression = TRUE) {
+UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor, max_download_chunk=15, geotiff_compression = TRUE) {
   # Updates and Processes the MODIS Data for all entries listed in database.
   #
   # Args:
-  #   database: a .csv file containing a list of region, for which MODIS data shall be updated. For a sample file and description see example_database.csv.
+  #   database: TODO a .csv file containing a list of region, for which MODIS data shall be updated. For a sample file and description see example_database.csv.
   #   storage_location: The path, where prior existing data are stored and where the output of the function will go.
   #   srcstorage: The path, where the downlaoded RAW MODIS .hdf files are kept. NULL if no persistent storage is required. hdf files will be deleted after every downloadchunk.
   #   timeseries_filename: The filename of the csv file where the timeseries data is written to. Default: timeseries.csv.
@@ -50,42 +51,11 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
   #
   # Returns:
   #   Nothing, but status messages on the console
-  
-  check_available_data <- function(datapath, timeseries_filename) {
-    
-    csv_file <- file.path(datapath,timeseries_filename)
-    if (file.exists(csv_file)) {
-      ts <- read.csv(csv_file)
-      ts_dates <- as.data.frame(as.Date(ts$date))
-    } else {
-      ts_dates <- NULL
-    }
-    
-    geotiff_list <- list.files(datapath, pattern="*.tif")
-    if (length(geotiff_list>0)) {
-      geotiff_dates=as.data.frame(as.Date(sub(".tif","",basename(geotiff_list))))
-    } else {
-      geotiff_dates <- NULL
-    }
-    
-    
-    return(list(TS = unname(ts_dates), GEOTIFF = unname(geotiff_dates)))
-  }
-  
-  get_latest_observation <- function(datapath, geotiff=FALSE, timeseries_filename) {
-    available_dates <- check_available_data(datapath, timeseries_filename)
-    if (geotiff) {
-      available_dates <- available_dates$GEOTIFF
-    } else {
-      available_dates <- available_dates$TS
-    }
-    
-    if (is.null(available_dates)) {
-      return(NULL)
-    } else {
-      return(as.Date(max(unlist(available_dates))))
-    }
-  }
+  #
+  #
+  #
+  # TODO: HOW DOES IT WORK?
+  #
   
   isString <- function(value) {
     # Can value be read as a string or is it NA,NULL or empty?
@@ -117,60 +87,15 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
     })
   }
   
-  DatabaseHandler <- function(database) {
-    # Checks if database is valid, otherwise stops execution with error message. Also rearranges database and solves nested subregions
-    #
-    # Args:
-    #   database: the database table
-    # Returns:
-    #   checked and rearranged database
-    
-    if (any(duplicated(database$ID))) {
-      stop("The ID entries in the given database are not unique")
-    } else if (any(duplicated(database$name))) {
-      stop("The name entries in the given database are not unique")
-    }
-    
-    for (i in 1:nrow(database)) {
-      # Check valid datatypes of all entries
-      if (!is.logical(database$store_geotiff[i]) || is.na(database$store_geotiff[i])) {
-        stop("Invalid entry in the database for store_geotiff. Only logicals (TRUE/FALSE) are allowed.")
-      } else if ((!is.na(database$store_length[i]) & !(is.numeric(database$store_length[i]) && database$store_length[i]>0))) {
-        stop("Invalid entry in the database for store_length. Only numerics (1,2,3,... or NA) are allowed.")
-      } else if ((!is.na(database$elev_split[i]) & !(is.numeric(database$elev_split[i]) && database$elev_split[i]>0))) {
-        stop("Invalid entry in the database for elev_split. Only numerics (1,2,3,... or NA) are allowed.")
-      } else if (!is.logical(database$cloud_correct[i]) || is.na(database$cloud_correct[i])) {
-        stop("Invalid entry in the database for cloud_correct. Only logicals (TRUE/FALSE) are allowed.")
-      } else if (!is.logical(database$timeseries[i]) || is.na(database$timeseries[i])) {
-        stop("Invalid entry in the database for timeseries. Only logicals (TRUE/FALSE) are allowed.")
-      } else if (!isDate(database$earliestdate[i])) {
-        stop("The entries for earliestdate must be of format YYYY-MM-DD or NA (NA -> as far back in time as possibe)")
-      } else if (!isDate(database$latestdate[i])) {
-        stop("The entries for latestdate must be of format YYYY-MM-DD or NA (NA -> today")
-      } else if (!is.na(database$is_subregion_of[i]) & !database$is_subregion_of[i] %in% database$ID) {
-        stop("One or more entries for is_subregion_of do not have a correspondend entry for a parent region")
-      } else if (!file.exists(as.character(database$shapefile[i]))) {
-        stop("One or more of the shapefiles in the database do not exist. Make sure the pathname is correct")
-      }
-      
-      # Resolve nested subregion dependancy to the last parentregion and check for circular dependancy
-      parentregion=data.frame()
-      subregion <- as.character(database$is_subregion_of[i])
-      subregionlist <- c(subregion)
-      while (isString(subregion)) {
-        parentregion <- database[database$ID==subregion,]
-        subregion <- as.character(parentregion$is_subregion_of)
-        subregionlist <- c(subregionlist,subregion)
-        if (any(duplicated(subregionlist))) {
-          stop("There is a circular dependancy of subregions!")
-        }
-      }
-      if (nrow(parentregion)==1) {
-        database$is_subregion_of[i] <- as.character(parentregion$ID)
-      }
-    }
-    database <- database[order(database$is_subregion_of, na.last =  FALSE),] 
-    return(database)
+  if (!dir.exists(storage_location)) {
+    stop(paste("The path storage_location=",storage_location," does not exist",sep=""))
+  }
+  
+  lockfile <- file.path(storage_location,"DIR.LOCKED")
+  if (file.exists(lockfile)) {
+    stop("Processing has been terminated. Another process is locking the storage_location.")
+  } else {
+    sink(file=lockfile,split=TRUE)
   }
   
   # Check argument modis_datastorage (or set up a temporary folder) and storage_location and stop, if they do not exist. 
@@ -184,41 +109,63 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
     stop(paste("The path modis_datastorage=",srcstorage," does not exist",sep=""))
   }
   
-  if (!dir.exists(storage_location)) {
-    stop(paste("The path storage_location=",storage_location," does not exist",sep=""))
+  ####################################################################################################
+  db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
+  
+  df_delete <- dbGetQuery(db, "SELECT * FROM settings WHERE deletion=1")
+  query <- dbSendStatement(db, "DELETE FROM settings WHERE deletion=1")
+  dbClearResult(query)
+  #TODO: Delete timeseries reference and geotiff reference as well
+  for (i in seq(length=nrow(df_delete))) {
+    dirname=as.character(df_delete$ID[i])
+    datapath <- file.path(storage_location,dirname)
+    unlink(datapath, recursive = TRUE)
   }
+   
+  ####################################################################################################
   
   # Initialise MODIS package. 
   # MODISoptions(MODISserverOrder="LAADS",quiet=TRUE,localArcPath=localArcPath,outDirPath=storage_location) 
-  
-  database <- DatabaseHandler(database)
   
   # Find the latest observation for each database entry
   # Earliest date is either the entry in the database if no geotiffs or timeseries is found in the datapath. Otherwise the latest observation 
   # of the timeseries is taken (store_geotiff=FALSE) or the latest observation that exists as geotiff (store_geotiff=TRUE)
   # Latest date is either the entry latestdate in the database, but if it is NA, latest date is set to today (systemtime)
+  
+  # freeze database at this moment of time. In normal operation,  only additions to the settings can be inserted by the web service. These are thus ignored in the further execution from now.
+  # However, no changes or deletions are allowed by any other code than this one here, either to the database or to the file structure.
+  db_frozen = dbReadTable(db,"settings")
+  
   df_dates <- data.frame()
-  for (i in 1:nrow(database)) {
-    name=as.character(database$name[i])
-    datapath <- file.path(storage_location,name)
-    date <- get_latest_observation(datapath, geotiff=database$store_geotiff[i], timeseries_filename=timeseries_filename)
-    if (is.null(date)) {
-      startdate <- as.Date(database$earliestdate[i])
+  for (i in seq(length=nrow(db_frozen))) {
+    ID <- db_frozen$ID[i]
+    max_obs <- as.Date(db_frozen$latestdate[i])
+    min_obs <- as.Date(db_frozen$earliestdate[i])-1
+    ts <- db_frozen$timeseries[i]
+    gtif <- db_frozen$store_geotiff[i]
+
+    if (gtif) {
+      last_obs_gtif <- as.Date(db_frozen$last_obs_gtif[i])
+      last_obs_gtif <- ifelse(is.na(last_obs_gtif),min_obs,last_obs_gtif)
     } else {
-      startdate <- date+1
+      last_obs_gtif <- Inf
     }
     
-    datevalue <- database$latestdate[i]
-    if (is.na(datevalue)) {
-      enddate <- Sys.Date()
+    if (ts) {
+      last_obs_ts <- as.Date(db_frozen$last_obs_ts[i])
+      last_obs_ts <- ifelse(is.na(last_obs_ts),min_obs,last_obs_ts)
     } else {
-      enddate <- as.Date(database$latestdate[i])
+      last_obs_ts <- Inf
     }
-    df <- data.frame(ID = database$ID[i], startdate=startdate, enddate = enddate)
+    
+    startdate <- min(last_obs_gtif,last_obs_ts)+1
+    enddate <- ifelse(is.null(max_obs),Sys.Date(),max_obs)
+    
+    df <- data.frame(ID = db_frozen$ID[i], startdate=startdate, enddate = enddate)
     df_dates <- rbind(df_dates,df)
   }
   rownames(df_dates) <- df_dates$ID
-  
+
   # daterange from earliest to latest date of all database entries
   startdate <- min(df_dates$startdate)
   enddate <- max(df_dates$enddate)
@@ -236,29 +183,20 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
   # Start Updating data: Loop over all downloadchunks resp. daterange pieces. After every chunk, delete temporary files to free harddisk space. 
   # Within the outer loop, loop over every entry of the database 
   for (j in 1:nrow(downloadchunks)) {
-    removefinally <- c() # Empty character vector that collects temporary files, that are not required anymore
-    for (i in 1:nrow(database)) {
-      ID <- as.character(database$ID[i])
-      name=as.character(database$name[i])
+    removefinally <- c() # Empty character vector that collects temporary files, that are not required anymore after each downloadchunk
+    for (i in 1:nrow(db_frozen)) {
+      ID <- as.character(db_frozen$ID[i])
+      name=as.character(db_frozen$name[i])
       
       # if startdate of database entry is within downloadchunk window, begin updating data
       # crop daterange if shapefiles startdate/enddate is later/earlier than startdate/enddate of downloadchunk
-      if ((downloadchunks$end[j] >= df_dates[ID,"startdate"]) && (downloadchunks$start[j] <= df_dates[ID,"enddate"])) {
-        if (df_dates[ID,"startdate"] > downloadchunks$start[j]) { 
-          daterange[1] <- df_dates[ID,"startdate"]
-        } else {
-          daterange[1] <- downloadchunks$start[j]
-        }
-        
-        if (df_dates[ID,"enddate"] < downloadchunks$end[j]) { 
-          daterange[2] <- df_dates[ID,"enddate"]
-        } else {
-          daterange[2] <- downloadchunks$end[j]
-        }
+      daterange[1] <- max(df_dates[ID,"startdate"],downloadchunks$start[j])
+      daterange[2] <- min(df_dates[ID,"enddate"],downloadchunks$end[j])
+      if (daterange[2]>=daterange[1]) { 
         
         # concentate datapath from entry name and storage location.
         # Create folder if does not yet exist
-        datapath <- file.path(storage_location,name)
+        datapath <- file.path(storage_location,ID)
         if (!dir.exists(datapath)) {
           dir.create(datapath, recursive=TRUE)
         }
@@ -266,15 +204,15 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
         # Now start downloading and processing new MODIS observations
         cat('\n','############### Data for ',name,' are being updated from ',as.character(daterange[1]),' to ',as.character(daterange[2]),' ... ###############','\n',sep='')
         
-        shapefilepath <- as.character(database$shapefile[i])
+        shapefilepath <- as.character(db_frozen$shapefile[i])
         
         # fetch the entry of the parentregion if current entry is a subregion. 
-        subregion <- as.character(database$is_subregion_of[i])
+        subregion <- as.character(db_frozen$is_subregion_of[i])
         # If the current entry is a a subregion, fetch data from parent region datapath. Otherwise access Online Dataserver
         if (isString(subregion)) {
-          parentregion <- database[database$ID==subregion,]
+          parentregion <- db_frozen[db_frozen$ID==subregion,]
           cat('... using data from PARENTREGION with ID ',as.character(parentregion$ID),' ...','\n',sep='')
-          srcdatapath <- file.path(storage_location,as.character(parentregion$name))
+          srcdatapath <- file.path(storage_location,as.character(parentregion$ID))
           rasterimages <- CropFromGeotiff(daterange = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, geotiff_compression = geotiff_compression)
         } else {
           cat('... using data from WEBSERVER ...','\n',sep='')
@@ -291,7 +229,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
             datainstorage = data.frame(file=gtifffiles, date=dates)
             
             #if cloud_correct=TRUE; use last observation to fill in cloud gaps in the new observations.
-            if (database$cloud_correct[i]) {
+            if (db_frozen$cloud_correct[i]) {
               cat('Cloud Correcting Geotiff images ...')
               newdata = rasterimages[order(rasterimages$date, decreasing=FALSE),]
               olddata<-datainstorage[!(datainstorage$file %in% newdata$file),]
@@ -305,7 +243,7 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
               
               old_r[old_r==-32767]<-NA
               
-              for (a in 1:length(newdata$file)) {
+              for (a in seq(length=nrow(newdata))) {
                 cat('..',a,sep="")
                 imagefile <- as.character(newdata$file[a])
                 r <- raster(imagefile)
@@ -325,94 +263,139 @@ UpdateData <- function(database, storage_location, srcstorage=NULL, geotiff_proc
             # Read any existing timeseries file, othwerwise create empty dataframe. Extract the dates from datainstorage, for which no entry in the timeseries exists.
             
             # If required, check if DEM exists, otherwise fetch and save it
-            if (!is.na(database$elev_split[i]) & database$timeseries[i]) {
-              cat('Elevation Splitting is activated: ')
-              dempath <- file.path(datapath,"dem.grd")
-              if (!file.exists(dempath)) {
-                cat('Downloading DEM data for the first time\n')
-                r <- raster(gtifffiles[1])
-                dem <- get_elev_raster(locations=r,z=9,src="aws")
-                dem_resampled <- raster::resample(dem, r)
-                rm(r,dem); gc()
-                writeRaster(dem_resampled, dempath)
-              } else {
-                dem_resampled<- raster(dempath)
-              }
-              stepsize <- database$elev_split[i]
-              min <- floor(min(values(dem_resampled))/stepsize)*stepsize
-              max <- ceiling(max(values(dem_resampled))/stepsize)*stepsize
-              alt_steps <- seq(min,max,by=stepsize)
-            } else {
-              alt_steps <- NA
-            }
             
-            if (database$timeseries[i]) {
+           
+            
+            if (db_frozen$timeseries[i]) {
               cat('Updating Time Series ...')
-              csvpath <- file.path(datapath,timeseries_filename)
-              if (file.exists(csvpath)) {
-                ts <- read.csv(csvpath,stringsAsFactors = FALSE, header = TRUE)
-                newtsdata <- datainstorage[!as.Date(datainstorage$date) %in% as.Date(ts$date),]
-              } else {
-                ts <- data.frame(matrix(nrow=0, ncol=length(alt_steps)))
-                newtsdata <- datainstorage
+              
+              df_ts_files <- dbGetQuery(db,sprintf("SELECT filepath,min_elev,max_elev FROM timeseries WHERE ID=%s",ID))
+              if (!is.na(db_frozen$elev_split[i])) {
+                cat('Elevation Splitting is activated: ')
+                dempath <- file.path(datapath,"dem.grd")
+                if (!file.exists(dempath)) {
+                  cat('Downloading DEM data for the first time\n')
+                  r <- raster(gtifffiles[1])
+                  dem <- get_elev_raster(locations=r,z=9,src="aws")
+                  dem_resampled <- raster::resample(dem, r)
+                  rm(r,dem); gc()
+                  writeRaster(dem_resampled, dempath)
+                } else {
+                  dem_resampled <- raster(dempath)
+                }
+                if (nrow(df_ts_files)==0) {
+                  stepsize <- db_frozen$elev_split[i]
+                  min <- floor(min(values(dem_resampled))/stepsize)*stepsize
+                  max <- ceiling(max(values(dem_resampled))/stepsize)*stepsize
+                  alt_steps <- seq(min,max,by=stepsize)
+                  df_ts_files <- data.frame(filepath=rep(NA,length(alt_steps)-1),min_elev=alt_steps[-length(alt_steps)],max_elev=alt_steps[-1])
+                } 
+              } else if (nrow(df_ts_files)==0) {
+                  df_ts_files <- data.frame(filepath=NA,min_elev=NA,max_elev=NA)
               }
               
+              last_obs_ts <- ifelse(is.na(db_frozen[ID,'last_obs_ts']),-Inf,as.Date(db_frozen[ID,'last_obs_ts']))
+              newtsdata <- datainstorage[as.Date(datainstorage$date) > last_obs_ts,]
               # if new data for timeseries are available, read the corresponding rasterimages and add value to the timeseries.
+              
               if (nrow(newtsdata)>0) {
+                values <- matrix(data = NA, nrow=length(newtsdata[,1]),ncol=nrow(df_ts_files))
+                dates <- c()
                 for (k in 1:length(newtsdata[,1])) {
                   cat('..',k,sep="")
                   r <- raster(as.character(newtsdata$file[k]))
                   r[r==-32766 | r==-32767]=NA  #remove cloud, water mask
-                  values <- c()
-                  values[1]=mean(values(r), na.rm=TRUE)
-                  date=as.character(newtsdata$date[k])
-                  for (p in seq_along(alt_steps[-1])) { 
-                    min <- alt_steps[p]
-                    max <- alt_steps[p+1]
-                    r_masked <- mask(r, (dem_resampled >= min & dem_resampled < max),maskvalue=FALSE)
-                    values[p+1] <- mean(values(r_masked), na.rm=TRUE)
+                  dates[k] <- as.character(newtsdata$date[k])
+                  for (p in seq(length=nrow(df_ts_files))) { 
+                    min <- df_ts_files$min_elev[p]
+                    max <- df_ts_files$max_elev[p]
+                    if (exists("dem_resampled")) {
+                      r_masked <- mask(r, (dem_resampled >= min & dem_resampled < max),maskvalue=FALSE)
+                      values[k,p] <- mean(values(r_masked), na.rm=TRUE)
+                    } else {
+                      values[k,p] <- mean(values(r), na.rm=TRUE)
+                    }
+
                   }
-                  ts_new <- data.frame(date,t(values))
-                  names(ts_new) <- c("date","value.-inf.inf",sapply(seq(alt_steps[-1]),FUN <- function(x) {paste("value",alt_steps[x],alt_steps[x+1],sep=".")}))
-                  ts <- rbind(ts, ts_new)
                 }
-                ts = ts[order(ts$date, decreasing=FALSE),]
-                write.csv(ts,file=csvpath,row.names=FALSE) 
+                rm(r); if (exists("dem_resampled")) {rm(dem_resampled)}; gc()
+                
+                for (p in seq(length=nrow(df_ts_files))) {
+                  newpath <- sprintf("%s/elev.%s.%s_ts.%s.csv",ID,df_ts_files$min_elev[p],df_ts_files$max_elev[p],round(as.numeric(Sys.time())))
+                  oldpath <- as.character(df_ts_files$filepath[p])
+                  ts_new <- data.frame(date=dates,value=values[,p])
+                  if (file.exists(file.path(storage_location,oldpath))) {
+                    ts <-  read.csv(file.path(storage_location,oldpath),header=TRUE,stringsAsFactors = FALSE)
+                    ts_new <- rbind(ts,ts_new)
+                  }
+                  write.csv(ts_new,file = file.path(storage_location,newpath),row.names=FALSE, na="NaN") 
+                  query <- dbSendStatement(db, sprintf("UPDATE timeseries SET filepath = '%s' WHERE filepath = '%s';", newpath, oldpath))
+                  if (dbGetRowsAffected(query)==0) {
+                    dbClearResult(query)
+                    min <- df_ts_files$min_elev[p]
+                    max <- df_ts_files$max_elev[p]
+                    query <- dbSendStatement(db, sprintf("INSERT INTO timeseries (ID, filepath, min_elev, max_elev) VALUES (%s,'%s','%s','%s')", ID, newpath, min, max))
+                  }
+                  dbClearResult(query)
+                }
+                db_frozen$last_obs_ts[i] <- max(dates)
+                query <- dbSendStatement(db, sprintf("UPDATE settings SET last_obs_ts = '%s' WHERE ID = %s;",max(dates),ID))
+                dbClearResult(query)
+                removefinally <- c(removefinally,file.path(storage_location,df_ts_files$filepath))
                 cat('..Done! \n')
               }
             }
             
-            
             # Add rasterimages that shall not be stored and are thus no longer required after the current download/daterangechunk to the vector removefinally.
             # If cloud correct is activated, keep the most recent rasterimage, even if store_geotiff is set to FALSE
-            if (!database$store_geotiff[i]) {
-              if (database$cloud_correct[i]) {
+            if (!db_frozen$store_geotiff[i]) {
+              if (db_frozen$cloud_correct[i]) {
                 datainstorage2remove <- datainstorage[!datainstorage$date %in% max(datainstorage$date),] #Excludes the most recent files
+                datainstorage2keep <- datainstorage[datainstorage$date %in% max(datainstorage$date),]
                 removefinally <- c(removefinally,as.character(datainstorage2remove$file))  
               } else {
                 removefinally <- c(removefinally,list.files(datapath, pattern = "\\.tif$", full.names = TRUE))
               }
-            } else {
-              if (!is.na(database$store_length[i]) && is.numeric(database$store_length[i]) && database$store_length[i]>0) {
+            } else if (!is.na(db_frozen$store_length[i]) && is.numeric(db_frozen$store_length[i]) && db_frozen$store_length[i]>0) {
                 alldates <- datainstorage$date
                 alldates <- alldates[order(alldates,decreasing=TRUE)]
-                dates2keep <- alldates[1:round(database$store_length[i])] 
+                dates2keep <- alldates[1:round(db_frozen$store_length[i])] 
+                datainstorage2keep <-datainstorage[datainstorage$date %in% dates2keep,]
                 datainstorage2remove <- datainstorage[!datainstorage$date %in% dates2keep,]
                 removefinally <- c(removefinally,as.character(datainstorage2remove$file)) 
-              } 
+            } else {
+              datainstorage2keep <- datainstorage
+            } 
+            
+            df <- dbGetQuery(db, sprintf("SELECT * FROM geotiffs WHERE ID='%s'",ID))
+            df$fullpath <- file.path(storage_location,df$filepath) 
+            data2db <- datainstorage2keep[!datainstorage2keep$file %in% df$fullpath,]
+            data2db$file <- file.path(ID,basename(as.character(data2db$file)))
+            for (o in seq(length = nrow(data2db))) {
+              query <- dbSendStatement(db, sprintf("INSERT INTO geotiffs (filepath, date, ID) VALUES ('%s','%s','%s')", data2db$file[o],data2db$date[o],ID))
+              dbClearResult(query)
             }
+            lastdate <- max(datainstorage2keep$date)
+            db_frozen$last_obs_gtif[i] <- lastdate
+            query <- dbSendStatement(db,sprintf("UPDATE settings SET last_obs_gtif = '%s' WHERE ID = %s;)",lastdate,ID))
+            dbClearResult(query)
         } 
         
       
       } else {
-        cat('\n############### Data is already up-to-date for ',name,'\n',sep='')
+        cat('\n','############### Data is already up-to-date for ',name,' until ',as.character(daterange[2]),' ... ###############','\n',sep='')
+        
         }
     }
     # Delete temporary files after one DownloadChunk
     if (length(removefinally)>0) {
-      file.remove(removefinally) 
+      query <- dbSendStatement(db,sprintf("DELETE FROM geotiffs WHERE filepath in ('%s')",paste(file.path(ID,basename(removefinally)),collapse="','")))
+      dbClearResult(query)
+      unlink(removefinally) 
     }
   }
+  dbDisconnect(db)
+  file.remove(lockfile)
 }
 
 CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geotiff_compression=FALSE) {
@@ -466,7 +449,7 @@ CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geot
         srcfile <- availabledata$file[i]
         dstfile <- file.path(dstfolder,paste(availabledata$date[i],'.tif',sep=''))
         cat('Processing ... ',as.character(srcfile),'\n',sep='')
-        gdalwarp(srcfile=srcfile,dstfile=dstfile,cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326",co=compressionmethod)
+        gdalwarp(srcfile=srcfile,dstfile=dstfile,cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326",co=compressionmethod, overwrite=TRUE)
         output <- rbind(output,data.frame(file=dstfile,date=as.Date(as.character(availabledata$date[i]))))
       } 
     } else {
@@ -494,8 +477,25 @@ GenerateCompressionArgument <- function(compression) {
 
 ########### 2.MAIN SCRIPT ##############
 # Read list of shapefiles
-database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE)
-UpdateData(database, storage_location=DATASTORAGE_LOC, srcstorage = MODIS_DATASTORAGE, geotiff_processor=GEOTIFF_PROCESSOR, max_download_chunk = maxDOWNLOADchunk)
+
+db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
+if (length(dbListTables(db))==0) {
+  cat("First startup: Initialising database")
+  query <- dbSendStatement(conn = db,"CREATE TABLE settings (ID INTEGER PRIMARY KEY,name TEXT, shapefile TEXT NOT NULL, is_subregion_of TEXT, store_geotiff INTEGER DEFAULT 1, store_length INTEGER, cloud_correct INTEGER DEFAULT 0, timeseries INTEGER DEFAULT 0, elev_split INTEGER, earliestdate TEXT, latestdate TEXT, deletion INTEGER DEFAULT 0, last_obs_ts TEXT, last_obs_gtif TEXT)")
+  dbClearResult(query)
+  query <- dbSendStatement(conn = db,"CREATE TABLE geotiffs (filepath TEXT,ID INTEGER NOT NULL, date TEXT, CONSTRAINT file_unique UNIQUE (filepath))")
+  dbClearResult(query)
+  query <- dbSendStatement(conn = db,"CREATE TABLE timeseries (filepath TEXT,ID INTEGER NOT NULL, min_elev INTEGER, max_elev INTEGER, CONSTRAINT file_unique UNIQUE (filepath))")
+  dbClearResult(query)
+  query <- dbSendStatement(conn = db,sprintf("INSERT INTO settings (ID, name, shapefile, store_geotiff, earliestdate, latestdate) VALUES (1,'MASTERREGION','%s',1,'%s','%s');",MASTERREGION_SHAPEFILE,MASTERREGION_EARLIEST_DATE,MASTERREGION_LATEST_DATE))
+  dbClearResult(query)
+} else if (!all(sort(dbListTables(db)) == sort(c("settings","geotiffs","timeseries","elev_zones")))) {
+  stop("Database is invalid or corrupted. Please check the filepath in DATABASE_LOC")
+}
+dbDisconnect(db)
+
+#database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE)
+UpdateData(db = DATABASE_LOC, storage_location=DATASTORAGE_LOC, srcstorage = MODIS_DATASTORAGE, geotiff_processor=GEOTIFF_PROCESSOR, max_download_chunk = maxDOWNLOADchunk)
   
   
 
