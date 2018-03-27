@@ -92,12 +92,19 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     stop(paste("The path storage_location=",storage_location," does not exist",sep=""))
   }
   
-  lockfile <- file.path(storage_location,"DIR.LOCKED")
-  if (file.exists(lockfile)) {
-    stop("Processing has been terminated. Another process is locking the storage_location.")
-  } else {
-    sink(file=lockfile,split=TRUE)
+  oldlockfile <- list.files("/home/jules/liveSNOWdata/",pattern="*.LOCKED", full.names = TRUE)
+  if (length(oldlockfile)>0) {
+    oldlockfile <- oldlockfile[1]
+    locked_date <- as.Date(gsub(".LOCKED","",basename(oldlockfile)))
+    if (today() - locked_date < 2) {
+      stop("Processing has been terminated. Another process is locking the storage_location.")
+    } else {
+      file.remove(oldlockfile)
+    }
   }
+  newlockfile <- file.path(storage_location,paste(today(),".LOCKED",sep=""))
+  sink(file=newlockfile,split=TRUE)
+  
   
   # Check argument modis_datastorage (or set up a temporary folder) and storage_location and stop, if they do not exist. 
   if (!isString(srcstorage)) {
@@ -140,8 +147,8 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   df_dates <- data.frame()
   for (i in seq(length=nrow(db_frozen))) {
     ID <- db_frozen$ID[i]
-    max_obs <- as.Date(db_frozen$latestdate[i])
-    min_obs <- as.Date(db_frozen$earliestdate[i])-1
+    max_obs <- min(as.Date(db_frozen$latestdate[i]),as.Date(db_frozen$latestdate[1]),na.rm=TRUE)
+    min_obs <- max(as.Date(db_frozen$earliestdate[i]),as.Date(db_frozen$earliestdate[1]),na.rm=TRUE)-1
     ts <- db_frozen$timeseries[i]
     gtif <- db_frozen$store_geotiff[i]
 
@@ -160,7 +167,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     }
     
     startdate <- min(last_obs_gtif,last_obs_ts)+1
-    enddate <- ifelse(is.null(max_obs),Sys.Date(),max_obs)
+    enddate <- ifelse(is.na(max_obs),today(),max_obs)
     
     df <- data.frame(ID = db_frozen$ID[i], startdate=startdate, enddate = enddate)
     df_dates <- rbind(df_dates,df)
@@ -168,8 +175,8 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   rownames(df_dates) <- df_dates$ID
 
   # daterange from earliest to latest date of all database entries, limited by earliestdate of Masterregion (1st db entry) and today()
-  startdate <- max(min(df_dates$startdate),as.Date(db_frozen$earliestdate[0]))
-  enddate <- min(max(df_dates$enddate),today())
+  startdate <- min(df_dates$startdate)
+  enddate <- max(df_dates$enddate)
   daterange = c(startdate,enddate)
   daterange_days = enddate-startdate
   
@@ -260,6 +267,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                 remove(r);gc()
                 writeRaster(old_r,filename=imagefile,format="GTiff",overwrite=TRUE, datatype="INT2S",NAflag=-32768,options=GenerateCompressionArgument(TRUE))
               }
+              rm(old_r,mask);gc()
               cat('..Done! \n')
             }
             
@@ -273,14 +281,22 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
             if (db_frozen$timeseries[i]) {
               cat('Updating Time Series ...')
               
-              df_ts_files <- dbGetQuery(db,sprintf("SELECT filepath,min_elev,max_elev FROM timeseries WHERE ID=%s",ID))
+              df_ts_files <- dbGetQuery(db,sprintf("SELECT filepath,min_elev,max_elev FROM timeseries WHERE catchmentid=%s",ID))
               if (!is.na(db_frozen$elev_split[i])) {
                 cat('Elevation Splitting is activated: ')
                 dempath <- file.path(datapath,"dem.grd")
                 if (!file.exists(dempath)) {
                   cat('Downloading DEM data for the first time\n')
                   r <- raster(gtifffiles[1])
-                  dem <- get_elev_raster(locations=r,z=9,src="aws")
+                  z = 9
+                  while(!exists("dem") & z>=0) {
+                   try(dem <- get_elev_raster(locations=r,z=z,src="aws")) 
+                   gc()
+                   z = z-1
+                  }
+                  if (!exists("dem")) {
+                    stop(sprintf('The catchment with ID = %s is too large. The resulting DEM does not fit into memory, even at zoom level %s',ID,z+1))
+                  }
                   dem_resampled <- raster::resample(dem, r)
                   rm(r,dem); gc()
                   writeRaster(dem_resampled, dempath)
@@ -339,7 +355,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                     dbClearResult(query)
                     min <- df_ts_files$min_elev[p]
                     max <- df_ts_files$max_elev[p]
-                    query <- dbSendStatement(db, sprintf("INSERT INTO timeseries (ID, filepath, min_elev, max_elev) VALUES (%s,'%s','%s','%s')", ID, newpath, min, max))
+                    query <- dbSendStatement(db, sprintf("INSERT INTO timeseries (catchmentid, filepath, min_elev, max_elev) VALUES (%s,'%s','%s','%s')", ID, newpath, min, max))
                   }
                   dbClearResult(query)
                 }
@@ -372,12 +388,12 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
               datainstorage2keep <- datainstorage
             } 
             
-            df <- dbGetQuery(db, sprintf("SELECT * FROM geotiffs WHERE ID='%s'",ID))
+            df <- dbGetQuery(db, sprintf("SELECT * FROM geotiffs WHERE catchmentid ='%s'",ID))
             df$fullpath <- file.path(storage_location,df$filepath) 
             data2db <- datainstorage2keep[!datainstorage2keep$file %in% df$fullpath,]
             data2db$file <- file.path(ID,basename(as.character(data2db$file)))
             for (o in seq(length = nrow(data2db))) {
-              query <- dbSendStatement(db, sprintf("INSERT INTO geotiffs (filepath, date, ID) VALUES ('%s','%s','%s')", data2db$file[o],data2db$date[o],ID))
+              query <- dbSendStatement(db, sprintf("INSERT INTO geotiffs (filepath, date, catchmentid) VALUES ('%s','%s','%s')", data2db$file[o],data2db$date[o],ID))
               dbClearResult(query)
             }
             lastdate <- max(datainstorage2keep$date)
@@ -400,7 +416,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     }
   }
   dbDisconnect(db)
-  file.remove(lockfile)
+  file.remove(newlockfile)
 }
 
 CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geotiff_compression=FALSE) {
@@ -486,16 +502,16 @@ GenerateCompressionArgument <- function(compression) {
 db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
 if (length(dbListTables(db))==0) {
   cat("First startup: Initialising database")
-  query <- dbSendStatement(conn = db,"CREATE TABLE settings (ID INTEGER PRIMARY KEY,name TEXT, geojson TEXT NOT NULL, is_subregion_of TEXT, store_geotiff INTEGER DEFAULT 1, store_length INTEGER, cloud_correct INTEGER DEFAULT 1, timeseries INTEGER DEFAULT 1, elev_split INTEGER, earliestdate TEXT DEFAULT '2000-01-01', latestdate TEXT, deletion INTEGER DEFAULT 0, last_obs_ts TEXT, last_obs_gtif TEXT)")
+  query <- dbSendStatement(conn = db,"CREATE TABLE settings (ID INTEGER PRIMARY KEY,name TEXT, geojson TEXT NOT NULL, is_subregion_of INTEGER DEFAULT 1, store_geotiff INTEGER DEFAULT 1, store_length INTEGER, cloud_correct INTEGER DEFAULT 1, timeseries INTEGER DEFAULT 1, elev_split INTEGER, earliestdate TEXT DEFAULT '2000-01-01', latestdate TEXT, deletion INTEGER DEFAULT 0, last_obs_ts TEXT, last_obs_gtif TEXT)")
   dbClearResult(query)
-  query <- dbSendStatement(conn = db,"CREATE TABLE geotiffs (filepath TEXT,ID INTEGER NOT NULL, date TEXT, CONSTRAINT file_unique UNIQUE (filepath))")
+  query <- dbSendStatement(conn = db,"CREATE TABLE geotiffs (ID INTEGER PRIMARY KEY, filepath TEXT,catchmentid INTEGER NOT NULL, date TEXT, CONSTRAINT file_unique UNIQUE (filepath))")
   dbClearResult(query)
-  query <- dbSendStatement(conn = db,"CREATE TABLE timeseries (filepath TEXT,ID INTEGER NOT NULL, min_elev INTEGER, max_elev INTEGER, CONSTRAINT file_unique UNIQUE (filepath))")
+  query <- dbSendStatement(conn = db,"CREATE TABLE timeseries (ID INTEGER PRIMARY KEY, filepath TEXT,catchmentid INTEGER NOT NULL, min_elev INTEGER, max_elev INTEGER, CONSTRAINT file_unique UNIQUE (filepath))")
   dbClearResult(query)
   
   geojson_masterregion <- as.json(MASTERREGION_SHAPEFILE)
   
-  query <- dbSendStatement(conn = db,sprintf("INSERT INTO settings (ID, name, geojson, store_geotiff, earliestdate, latestdate) VALUES (1,'MASTERREGION','%s',1,'%s','%s');",geojson_masterregion,MASTERREGION_EARLIEST_DATE,MASTERREGION_LATEST_DATE))
+  query <- dbSendStatement(conn = db,sprintf("INSERT INTO settings (ID, name, geojson, is_subregion_of, store_geotiff, earliestdate, latestdate) VALUES (1,'MASTERREGION','%s',NULL,1,'%s','%s');",geojson_masterregion,MASTERREGION_EARLIEST_DATE,MASTERREGION_LATEST_DATE))
   dbClearResult(query)
 } else if (!all(sort(dbListTables(db)) == sort(c("settings","geotiffs","timeseries")))) {
   stop("Database is invalid or corrupted. Please check the filepath in DATABASE_LOC")

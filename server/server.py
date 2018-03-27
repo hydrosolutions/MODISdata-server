@@ -147,12 +147,18 @@ def add_catchment():
 
     try:
         geojson_obj = geojson.loads(region_geojson)
-        if len(geojson_obj['features']) != 1:
-            abort(400, 'the provided geojson has more than one feature. Only one feature of type polygon is allowed')
-        elif geojson_obj['features'][0]['geometry']['type'] is not 'Polygon':
-            abort(400, 'the provided geojson must contain a feature of type polygon. Another type was found instead')
     except:
         abort(400, 'the provided geojson does not describe a valid spatial object')
+    if len(geojson_obj['features']) != 1:
+        abort(400, 'the provided geojson has more than one feature. Only one feature of type polygon is allowed')
+    elif geojson_obj['features'][0]['geometry'] is None:
+        abort(400, 'the provided geojson must contain a feature of type polygon.')
+    elif geojson_obj['features'][0]['geometry']['type'] is not 'Polygon':
+        abort(400, 'the provided geojson must contain a feature of type polygon.')
+    elif 'crs' not in geojson_obj.keys():
+        abort(400, 'the provided geojson does not have a projection')
+    elif str(geojson_obj['crs']['properties']['name']) != 'urn:ogc:def:crs:OGC:1.3:CRS84':
+        abort(400, 'the geojson must have the following projection: urn:ogc:def:crs:OGC:1.3:CRS84')
 
     if "store_length" in input.keys():
         try:
@@ -260,3 +266,5 @@ if __name__ == '__main__':
     #c = conn.cursor()
 
     app.run(debug=True)
+
+    # TODO: geojson projection check, is it required? handle timeseries and geotiff requests
