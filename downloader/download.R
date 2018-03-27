@@ -34,6 +34,7 @@ if (cmd) {
 source(GEOTIFF_PROCESSOR)
 library(elevatr)
 library(RSQLite)
+library(geojsonio)
 
 ########### 1.FUNCTION DEFINITIONS ##############
 # The main function which organises and triggers the downloading and processing for all entries in the database
@@ -166,9 +167,9 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   }
   rownames(df_dates) <- df_dates$ID
 
-  # daterange from earliest to latest date of all database entries
-  startdate <- min(df_dates$startdate)
-  enddate <- max(df_dates$enddate)
+  # daterange from earliest to latest date of all database entries, limited by earliestdate of Masterregion (1st db entry) and today()
+  startdate <- max(min(df_dates$startdate),as.Date(db_frozen$earliestdate[0]))
+  enddate <- min(max(df_dates$enddate),today())
   daterange = c(startdate,enddate)
   daterange_days = enddate-startdate
   
@@ -204,7 +205,10 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
         # Now start downloading and processing new MODIS observations
         cat('\n','############### Data for ',name,' are being updated from ',as.character(daterange[1]),' to ',as.character(daterange[2]),' ... ###############','\n',sep='')
         
-        shapefilepath <- as.character(db_frozen$shapefile[i])
+        shapefilepath <- tempfile(fileext = ".geojson")
+        capture.output(spatial_obj <- geojson_sp(as.json(db_frozen$geojson[i])),file='NULL')
+        capture.output(capture.output(geojson_write(spatial_obj,file=shapefilepath),file='NULL',type="message"),file='NULL',type="output")
+        removefinally <- c(removefinally,shapefilepath)
         
         # fetch the entry of the parentregion if current entry is a subregion. 
         subregion <- as.character(db_frozen$is_subregion_of[i])
@@ -326,6 +330,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                   ts_new <- data.frame(date=dates,value=values[,p])
                   if (file.exists(file.path(storage_location,oldpath))) {
                     ts <-  read.csv(file.path(storage_location,oldpath),header=TRUE,stringsAsFactors = FALSE)
+                    ts <- ts[as.Date(ts$date)<=last_obs_ts]
                     ts_new <- rbind(ts,ts_new)
                   }
                   write.csv(ts_new,file = file.path(storage_location,newpath),row.names=FALSE, na="NaN") 
@@ -481,15 +486,18 @@ GenerateCompressionArgument <- function(compression) {
 db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
 if (length(dbListTables(db))==0) {
   cat("First startup: Initialising database")
-  query <- dbSendStatement(conn = db,"CREATE TABLE settings (ID INTEGER PRIMARY KEY,name TEXT, shapefile TEXT NOT NULL, is_subregion_of TEXT, store_geotiff INTEGER DEFAULT 1, store_length INTEGER, cloud_correct INTEGER DEFAULT 0, timeseries INTEGER DEFAULT 0, elev_split INTEGER, earliestdate TEXT, latestdate TEXT, deletion INTEGER DEFAULT 0, last_obs_ts TEXT, last_obs_gtif TEXT)")
+  query <- dbSendStatement(conn = db,"CREATE TABLE settings (ID INTEGER PRIMARY KEY,name TEXT, geojson TEXT NOT NULL, is_subregion_of TEXT, store_geotiff INTEGER DEFAULT 1, store_length INTEGER, cloud_correct INTEGER DEFAULT 1, timeseries INTEGER DEFAULT 1, elev_split INTEGER, earliestdate TEXT DEFAULT '2000-01-01', latestdate TEXT, deletion INTEGER DEFAULT 0, last_obs_ts TEXT, last_obs_gtif TEXT)")
   dbClearResult(query)
   query <- dbSendStatement(conn = db,"CREATE TABLE geotiffs (filepath TEXT,ID INTEGER NOT NULL, date TEXT, CONSTRAINT file_unique UNIQUE (filepath))")
   dbClearResult(query)
   query <- dbSendStatement(conn = db,"CREATE TABLE timeseries (filepath TEXT,ID INTEGER NOT NULL, min_elev INTEGER, max_elev INTEGER, CONSTRAINT file_unique UNIQUE (filepath))")
   dbClearResult(query)
-  query <- dbSendStatement(conn = db,sprintf("INSERT INTO settings (ID, name, shapefile, store_geotiff, earliestdate, latestdate) VALUES (1,'MASTERREGION','%s',1,'%s','%s');",MASTERREGION_SHAPEFILE,MASTERREGION_EARLIEST_DATE,MASTERREGION_LATEST_DATE))
+  
+  geojson_masterregion <- as.json(MASTERREGION_SHAPEFILE)
+  
+  query <- dbSendStatement(conn = db,sprintf("INSERT INTO settings (ID, name, geojson, store_geotiff, earliestdate, latestdate) VALUES (1,'MASTERREGION','%s',1,'%s','%s');",geojson_masterregion,MASTERREGION_EARLIEST_DATE,MASTERREGION_LATEST_DATE))
   dbClearResult(query)
-} else if (!all(sort(dbListTables(db)) == sort(c("settings","geotiffs","timeseries","elev_zones")))) {
+} else if (!all(sort(dbListTables(db)) == sort(c("settings","geotiffs","timeseries")))) {
   stop("Database is invalid or corrupted. Please check the filepath in DATABASE_LOC")
 }
 dbDisconnect(db)
