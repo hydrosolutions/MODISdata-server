@@ -31,6 +31,20 @@ if (cmd) {
   }
 }  
 
+oldlockfile <- list.files(DATASTORAGE_LOC,pattern="*.LOCKED", full.names = TRUE)
+if (length(oldlockfile)>0) {
+  oldlockfile <- oldlockfile[1]
+  locked_date <- as.Date(gsub(".LOCKED","",basename(oldlockfile)))
+  if (today() - locked_date < 2) {
+    stop("Processing has been terminated. Another process is locking the storage_location.")
+  } else {
+    file.remove(oldlockfile)
+  }
+}
+newlockfile <- file.path(DATASTORAGE_LOC,paste(Sys.Date(),".LOCKED",sep=""))
+file.create(newlockfile)
+sink(file=newlockfile,split=TRUE,append = TRUE, type=c('output','message'))
+
 source(GEOTIFF_PROCESSOR)
 library(elevatr)
 library(RSQLite)
@@ -110,19 +124,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     stop(paste("The path storage_location=",storage_location," does not exist",sep=""))
   }
   
-  oldlockfile <- list.files("/home/jules/liveSNOWdata/",pattern="*.LOCKED", full.names = TRUE)
-  if (length(oldlockfile)>0) {
-    oldlockfile <- oldlockfile[1]
-    locked_date <- as.Date(gsub(".LOCKED","",basename(oldlockfile)))
-    if (today() - locked_date < 2) {
-      stop("Processing has been terminated. Another process is locking the storage_location.")
-    } else {
-      file.remove(oldlockfile)
-    }
-  }
-  newlockfile <- file.path(storage_location,paste(today(),".LOCKED",sep=""))
-  sink(file=newlockfile,split=TRUE)
-  
+
   
   # Check argument modis_datastorage (or set up a temporary folder) and storage_location and stop, if they do not exist. 
   if (!isString(srcstorage)) {
@@ -430,7 +432,6 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     }
   }
   dbDisconnect(db)
-  file.remove(newlockfile)
 }
 
 CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geotiff_compression=FALSE) {
@@ -513,6 +514,7 @@ GenerateCompressionArgument <- function(compression) {
 ########### 2.MAIN SCRIPT ##############
 # Read list of shapefiles
 
+
 db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
 if (length(dbListTables(db))==0) {
   cat("First startup: Initialising database")
@@ -535,5 +537,5 @@ dbDisconnect(db)
 #database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE)
 UpdateData(db = DATABASE_LOC, storage_location=DATASTORAGE_LOC, srcstorage = MODIS_DATASTORAGE, geotiff_processor=GEOTIFF_PROCESSOR, max_download_chunk = maxDOWNLOADchunk)
   
-  
+unlink(newlockfile)
 

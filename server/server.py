@@ -9,14 +9,19 @@ import json
 import csv
 import os.path
 import io
+from time import sleep
+import subprocess
 
 app = Flask(__name__)
 
 # Configuration routines
 app.config.from_object(__name__)
 configfile = "/home/jules/Desktop/Hydromet/MODISsnow_server/MODISsnow-server/downloader/examplefiles/config.R"
+
+download_stdout = None
+
 def load_config(configfile,flaskapp):
-    required = ["MODIS_DATASTORAGE", "DATASTORAGE_LOC", "DATABASE_LOC","APP_USER","APP_PW"]
+    required = ["MODIS_DATASTORAGE", "DATASTORAGE_LOC", "DATABASE_LOC","DOWNLOAD_SCRIPT_LOC","APP_USER","APP_PW"]
     input = dict()
     configvariables = dict()
     with open(configfile) as f:
@@ -129,10 +134,57 @@ def handle_error(error):
     response.status_code = error.status_code
     return response
 
+@app.errorhandler(404)
+def handle_error(error):
+    response = jsonify({'message': 'not found'})
+    response.status_code = 404
+    return response
+
 @app.route('/', methods=['GET'])
 def status():
     # TODO: Add filesystem usage to status info?
     return jsonify({"status" : "OK"})
+
+@app.route('/data_processor', methods=['PUT'])
+@requires_auth
+def data_processor_trigger():
+    response = data_processor_status()
+    if response['status']=='idle':
+        path2script = app.config['DOWNLOAD_SCRIPT_LOC']
+        args = configfile
+        cmd =  'Rscript %s %s' % (path2script, args)
+        try:
+            independent_process = subprocess.Popen(cmd,shell=True)
+            waiting=0
+            while response['status']=='idle':
+                response = data_processor_status()
+                if waiting < 5:
+                    sleep(0.5); waiting=waiting+0.5
+                else:
+                    raise Exception
+            response = jsonify(response)
+            response.status_code = 202
+            return response
+        except:
+            raise Error('the server failed to launch the data processor', status_code=500)
+    else:
+        raise Error('data processor is already running. Try again later', status_code=409)
+
+def data_processor_status():
+    status = 'idle'
+    content = None
+    for file in os.listdir(app.config['DATASTORAGE_LOC']):
+        if file.endswith(".LOCKED"):
+            status = 'busy'
+            reader = open(os.path.join(app.config['DATASTORAGE_LOC'],file), 'r')
+            content = reader.read()
+            break
+    return {'status': status, 'output': content}
+
+@app.route('/data_processor', methods=['GET'])
+def response_data_processor_status():
+    response = data_processor_status()
+    return jsonify(response)
 
 @app.route('/catchments', methods=['GET'])
 def list_catchments():
