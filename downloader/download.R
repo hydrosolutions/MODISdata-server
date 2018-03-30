@@ -35,7 +35,7 @@ oldlockfile <- list.files(DATASTORAGE_LOC,pattern="*.LOCKED", full.names = TRUE)
 if (length(oldlockfile)>0) {
   oldlockfile <- oldlockfile[1]
   locked_date <- as.Date(gsub(".LOCKED","",basename(oldlockfile)))
-  if (today() - locked_date < 2) {
+  if (Sys.Date() - locked_date < 2) {
     stop("Processing has been terminated. Another process is locking the storage_location.")
   } else {
     file.remove(oldlockfile)
@@ -237,8 +237,8 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
         cat('\n','############### Data for ',name,' are being updated from ',as.character(daterange[1]),' to ',as.character(daterange[2]),' ... ###############','\n',sep='')
         
         shapefilepath <- tempfile(fileext = ".geojson")
-        capture.output(spatial_obj <- geojson_sp(as.json(db_frozen$geojson[i])),file='NULL')
-        capture.output(capture.output(geojson_write(spatial_obj,file=shapefilepath),file='NULL',type="message"),file='NULL',type="output")
+        capture.output(spatial_obj <- geojson_sp(as.json(db_frozen$geojson[i])),file=NULL)
+        capture.output(capture.output(geojson_write(spatial_obj,file=shapefilepath),file=NULL,type="message"),file=NULL,type="output")
         removefinally <- c(removefinally,shapefilepath)
         
         # fetch the entry of the parentregion if current entry is a subregion. 

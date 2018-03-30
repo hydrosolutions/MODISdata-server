@@ -275,10 +275,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
   # Merge lists of downloaded HDF Tiles
   files <- c(out1,out2)
   # abort when nothing has been downloaded or the number of downlaoded tiles does not coincide with the number of required tiles for this shapefile
-  if ((length(files) %% length(tile@tile)) > 0) {
-    setwd(oldwd)
-    return(output) 
-  } else if (length(files)==0) {
+  if (length(files)==0) {
     setwd(oldwd)
     return(output)
   }
@@ -291,10 +288,13 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
   
   # Process all Tiles of each observation date
   for (k in 1:nrow(observationsbydate)) {
-    
     filesvalid=TRUE #help variable in case a HDF File is corrupted
     HDFlist =  observationsbydate[[k]]
     HDFlistbydateandtile <- by(as.data.frame(HDFlist), as.data.frame(HDFlist)[,"tile"], function(x) x)
+    if ((length(HDFlistbydateandtile) != length(tile@tile))) {
+      cat('Some Tile are missing for date ',observationsbydate[[k]][1,'date'],'. Processing is skipped', '\n',sep='')
+      next 
+    } 
     GTifflist <- c()
     GTifflist2 <- c()
     
@@ -311,8 +311,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
           unlink(as.character(HDFfile$file))
           cat('The downloaded file has not been recognized as a valid HDF4/5 file. Try again or manually download the following file and check its validity: ', as.character(HDFfile$files),'\n',sep='')
           filesvalid=FALSE
-          setwd(oldwd)
-          break
+          next
         }
         
         # GEOTIFF PROCESSING: 
