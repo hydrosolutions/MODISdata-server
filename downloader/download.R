@@ -88,6 +88,24 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     })
   }
   
+  get_DEM <- function(r, savepath=NULL, start_z=9) {
+    z = start_z
+    while(!exists("dem") & z>=0) {
+      try(dem <- get_elev_raster(locations=r,z=z,src="aws")) 
+      gc()
+      z = z-1
+    }
+    if (!exists("dem")) {
+      stop(sprintf('The catchment with ID = %s is too large. The resulting DEM does not fit into memory, even at zoom level %s',ID,z+1))
+    }
+    dem_resampled <- raster::resample(dem, r)
+    rm(r,dem); gc()
+    if (!is.null(savepath)) {
+      writeRaster(dem_resampled, savepath)
+    }
+    return(dem_resampled)
+  }
+  
   if (!dir.exists(storage_location)) {
     stop(paste("The path storage_location=",storage_location," does not exist",sep=""))
   }
@@ -125,8 +143,12 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   dbClearResult(query)
   #TODO: Delete timeseries reference and geotiff reference as well
   for (i in seq(length=nrow(df_delete))) {
-    dirname=as.character(df_delete$ID[i])
-    datapath <- file.path(storage_location,dirname)
+    ID <- as.character(df_delete$ID[i])
+    query <- dbSendStatement(db, sprintf("DELETE FROM geotiffs WHERE catchmentid=%s",ID))
+    dbClearResult(query)
+    query <- dbSendStatement(db, sprintf("DELETE FROM timeseries WHERE catchmentid=%s",ID))
+    dbClearResult(query)
+    datapath <- file.path(storage_location,ID)
     unlink(datapath, recursive = TRUE)
   }
    
@@ -275,7 +297,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
             # Read any existing timeseries file, othwerwise create empty dataframe. Extract the dates from datainstorage, for which no entry in the timeseries exists.
             
             # If required, check if DEM exists, otherwise fetch and save it
-            
+
            
             
             if (db_frozen$timeseries[i]) {
@@ -288,30 +310,22 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                 if (!file.exists(dempath)) {
                   cat('Downloading DEM data for the first time\n')
                   r <- raster(gtifffiles[1])
-                  z = 9
-                  while(!exists("dem") & z>=0) {
-                   try(dem <- get_elev_raster(locations=r,z=z,src="aws")) 
-                   gc()
-                   z = z-1
-                  }
-                  if (!exists("dem")) {
-                    stop(sprintf('The catchment with ID = %s is too large. The resulting DEM does not fit into memory, even at zoom level %s',ID,z+1))
-                  }
-                  dem_resampled <- raster::resample(dem, r)
-                  rm(r,dem); gc()
-                  writeRaster(dem_resampled, dempath)
+                  dem_resampled <- get_DEM(r, savepath=dempath)
                 } else {
-                  dem_resampled <- raster(dempath)
+                  dem_resampled <- raster(dempath) 
                 }
                 if (nrow(df_ts_files)==0) {
                   stepsize <- db_frozen$elev_split[i]
                   min <- floor(min(values(dem_resampled))/stepsize)*stepsize
                   max <- ceiling(max(values(dem_resampled))/stepsize)*stepsize
                   alt_steps <- seq(min,max,by=stepsize)
-                  df_ts_files <- data.frame(filepath=rep(NA,length(alt_steps)-1),min_elev=alt_steps[-length(alt_steps)],max_elev=alt_steps[-1])
+                  min_elev <- alt_steps[-length(alt_steps)]
+                  max_elev <- alt_steps[-1]
+                  elev_zone <- min_elev %/% 500 + 1
+                  df_ts_files <- data.frame(filepath=rep(NA,length(alt_steps)-1),min_elev=min_elev,max_elev=max_elev, elev_zone=elev_zone)
                 } 
               } else if (nrow(df_ts_files)==0) {
-                  df_ts_files <- data.frame(filepath=NA,min_elev=NA,max_elev=NA)
+                  df_ts_files <- data.frame(filepath=NA,min_elev=-9999,max_elev=9999, elev_zone=1)
               }
               
               last_obs_ts <- ifelse(is.na(db_frozen[ID,'last_obs_ts']),-Inf,as.Date(db_frozen[ID,'last_obs_ts']))
@@ -329,19 +343,18 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                   for (p in seq(length=nrow(df_ts_files))) { 
                     min <- df_ts_files$min_elev[p]
                     max <- df_ts_files$max_elev[p]
-                    if (exists("dem_resampled")) {
+                    if (min == -9999 & max == 9999) {
+                      values[k,p] <- mean(values(r), na.rm=TRUE)
+                    } else {
                       r_masked <- mask(r, (dem_resampled >= min & dem_resampled < max),maskvalue=FALSE)
                       values[k,p] <- mean(values(r_masked), na.rm=TRUE)
-                    } else {
-                      values[k,p] <- mean(values(r), na.rm=TRUE)
                     }
-
                   }
                 }
                 rm(r); if (exists("dem_resampled")) {rm(dem_resampled)}; gc()
                 
                 for (p in seq(length=nrow(df_ts_files))) {
-                  newpath <- sprintf("%s/elev.%s.%s_ts.%s.csv",ID,df_ts_files$min_elev[p],df_ts_files$max_elev[p],round(as.numeric(Sys.time())))
+                  newpath <- sprintf("%s/ts-%s-%s.csv",ID,df_ts_files$elev_zone[p],round(as.numeric(Sys.time())))
                   oldpath <- as.character(df_ts_files$filepath[p])
                   ts_new <- data.frame(date=dates,value=values[,p])
                   if (file.exists(file.path(storage_location,oldpath))) {
@@ -355,7 +368,8 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                     dbClearResult(query)
                     min <- df_ts_files$min_elev[p]
                     max <- df_ts_files$max_elev[p]
-                    query <- dbSendStatement(db, sprintf("INSERT INTO timeseries (catchmentid, filepath, min_elev, max_elev) VALUES (%s,'%s','%s','%s')", ID, newpath, min, max))
+                    elev_zone <- df_ts_files$elev_zone[p]
+                    query <- dbSendStatement(db, sprintf("INSERT INTO timeseries (catchmentid, filepath, min_elev, max_elev, elev_zone) VALUES (%s,'%s','%s','%s','%s')", ID, newpath, min, max, elev_zone))
                   }
                   dbClearResult(query)
                 }
@@ -506,7 +520,7 @@ if (length(dbListTables(db))==0) {
   dbClearResult(query)
   query <- dbSendStatement(conn = db,"CREATE TABLE geotiffs (ID INTEGER PRIMARY KEY, filepath TEXT,catchmentid INTEGER NOT NULL, date TEXT, CONSTRAINT file_unique UNIQUE (filepath))")
   dbClearResult(query)
-  query <- dbSendStatement(conn = db,"CREATE TABLE timeseries (ID INTEGER PRIMARY KEY, filepath TEXT,catchmentid INTEGER NOT NULL, min_elev INTEGER, max_elev INTEGER, CONSTRAINT file_unique UNIQUE (filepath))")
+  query <- dbSendStatement(conn = db,"CREATE TABLE timeseries (ID INTEGER PRIMARY KEY, filepath TEXT,catchmentid INTEGER NOT NULL, min_elev INTEGER, elev_zone INTEGER,max_elev INTEGER, CONSTRAINT file_unique UNIQUE (filepath))")
   dbClearResult(query)
   
   geojson_masterregion <- as.json(MASTERREGION_SHAPEFILE)

@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, g, abort, url_for
+from flask import Flask, jsonify, g, abort, url_for, send_file
 import sqlite3
 import shapefile
 import geojson
@@ -6,6 +6,9 @@ from datetime import datetime as dt
 from functools import wraps
 from flask import request, Response, make_response
 import json
+import csv
+import os.path
+import io
 
 app = Flask(__name__)
 
@@ -108,9 +111,23 @@ def is_deleted(id):
     else:
         return True
 
-@app.errorhandler(404)
-def not_found(error):
-    return make_response(jsonify({'error': 'Not found'}), 404)
+class Error(Exception):
+    def __init__(self, message, status_code, payload=None):
+        Exception.__init__(self)
+        self.message = message
+        self.status_code = status_code
+        self.payload = payload
+
+    def to_dict(self):
+        rv = dict(self.payload or ())
+        rv['message'] = self.message
+        return rv
+
+@app.errorhandler(Error)
+def handle_error(error):
+    response = jsonify(error.to_dict())
+    response.status_code = error.status_code
+    return response
 
 @app.route('/', methods=['GET'])
 def status():
@@ -132,11 +149,11 @@ def list_catchments():
 @requires_auth
 def add_catchment():
     if not request.json:
-        abort(400, 'request must be of type json')
+        raise Error('request must be of type json', status_code=400)
 
     input = request.json
     if not set(('name', 'geojson')) <= set(input.keys()):
-        abort(400, 'request must include a json with values for the keys name (str) and geojson (geojson)')
+        raise Error('request must include a json with values for the keys name (str) and geojson (geojson)', status_code=400)
     else:
         name = input['name']
         region_geojson = input['geojson']
@@ -148,24 +165,25 @@ def add_catchment():
     try:
         geojson_obj = geojson.loads(region_geojson)
     except:
-        abort(400, 'the provided geojson does not describe a valid spatial object')
+        raise Error('the provided geojson does not describe a valid spatial object', status_code=400)
     if len(geojson_obj['features']) != 1:
-        abort(400, 'the provided geojson has more than one feature. Only one feature of type polygon is allowed')
+        raise Error('the provided geojson has more than one feature. Only one feature of type polygon is allowed', status_code=400)
     elif geojson_obj['features'][0]['geometry'] is None:
-        abort(400, 'the provided geojson must contain a feature of type polygon.')
+        raise Error('the provided geojson must contain a feature of type polygon.', status_code=400)
     elif geojson_obj['features'][0]['geometry']['type'] is not 'Polygon':
-        abort(400, 'the provided geojson must contain a feature of type polygon.')
+        raise Error('the provided geojson must contain a feature of type polygon.', status_code=400)
     elif 'crs' not in geojson_obj.keys():
-        abort(400, 'the provided geojson does not have a projection')
+        raise Error('the provided geojson does not have a projection', status_code=400)
     elif str(geojson_obj['crs']['properties']['name']) != 'urn:ogc:def:crs:OGC:1.3:CRS84':
-        abort(400, 'the geojson must have the following projection: urn:ogc:def:crs:OGC:1.3:CRS84')
+        raise Error('the geojson must have the following projection: urn:ogc:def:crs:OGC:1.3:CRS84', status_code=400)
 
     if "store_length" in input.keys():
         try:
             store_length = int(input['store_length'])
             if store_length < 1: raise(Exception)
         except:
-            abort(400, 'store_length must be an integer > 0')
+            raise Error('store_length must be an integer > 0',  status_code=400)
+
     else:
         store_length = 365
 
@@ -174,16 +192,16 @@ def add_catchment():
             elev_split = int(input['elev_split'])
             if elev_split < 1: raise(Exception)
         except:
-            abort(400, 'elev_split must be an integer > 0')
+            raise Error('elev_split must be an integer > 0',  status_code=400)
     else:
-        elev_split = 500
+        elev_split = None
 
     if "earliestdate" in input.keys():
         try:
             earliestdate = str(input['earliestdate'])
             dt.strptime(earliestdate, '%Y-%m-%d')
         except:
-            abort(400, 'earliestdate must be a string with datetime format YYYY-MM-DD')
+            raise Error('earliestdate must be a string with datetime format YYYY-MM-DD', status_code=400)
     else:
         earliestdate = None
 
@@ -193,7 +211,7 @@ def add_catchment():
             latestdate = str(input['latestdate'])
             dt.strptime(latestdate, '%Y-%m-%d')
         except:
-            abort(400, 'earliestdate must be a string with datetime format YYYY-MM-DD')
+            raise Error('latestdate must be a string with datetime format YYYY-MM-DD', status_code=400)
     else:
         latestdate = None
 
@@ -210,7 +228,7 @@ def add_catchment():
 def show_catchment(id):
     entry = query_db('select * from settings where ID = ? and deletion = 0',[id])
     if len(entry) == 0:
-        abort(404, 'there is no catchment with the requested id')
+        raise Error('there is no catchment with the requested id', status_code=404)
     else:
         entry = entry[0]
         entry.pop('geojson', None)
@@ -222,7 +240,7 @@ def show_catchment(id):
 @app.route('/catchments/<id>', methods=['DELETE'])
 def tag_catchment4deletion(id):
     if is_deleted(id):
-        abort(404, 'there is no catchment with the requested id')
+        raise Error('there is no catchment with the requested id', status_code=404)
     elif int(id) is not 1:
         conn = get_db()
         cursor = conn.cursor()
@@ -230,29 +248,92 @@ def tag_catchment4deletion(id):
         conn.commit()
         return ('', 204)
     else:
-        abort(418,'... and even if I were not, to ask for the deletion of the masterregion, that is too hot.')
+        raise Error('... and even if I were not, to ask for the deletion of the masterregion, that is too hot.', status_code=418)
 
 @app.route('/catchments/<id>/timeseries', methods=['GET'])
 def list_timeseries(id):
     if not is_deleted(id):
-        entries = query_db('select * from timeseries where ID = ?', [id])
+        entries = query_db('select ID,catchmentid,min_elev,max_elev,elev_zone from timeseries where catchmentid = ?', [id])
+        for i, entry in enumerate(entries):
+            entries[i].update({"href": url_for('show_timeseries', id=entry["ID"], catchmentid=entry['catchmentid'])})
         return jsonify(entries)
     else:
-        abort(404, 'there is no catchment with the requested id')
+        raise Error('there is no catchment with the requested id', status_code=404)
+
+
+@app.route('/catchments/<catchmentid>/timeseries/<id>', methods=['GET'])
+def show_timeseries(id,catchmentid):
+    path = query_db('select filepath from timeseries where ID = ?', [id])
+    if len(path)==0:
+        raise Error('there is no timeseries with the requested id', status_code=404)
+
+    fullpath = os.path.join(app.config['DATASTORAGE_LOC'],path[0]['filepath'])
+
+    argkeys = request.args.keys()
+    if len(argkeys)- argkeys.count('begin') - argkeys.count('end') > 0:
+        raise Error('the server could not understand all of the provided query parameters. Use only begin and end.', status_code=400)
+    try:
+        with open(fullpath) as csvfile:
+            reader = csv.reader(csvfile)
+            header = reader.next()
+            datepos = header.index('date')
+            valuepos = 1 - datepos
+            datadict = {rows[datepos]: float(rows[valuepos]) for rows in reader}
+    except:
+        raise Error('the server failed to locate the requested timeseries', status_code=500)
+
+    dates = [dt.strptime(key, '%Y-%m-%d') for key in datadict.keys()]
+    if 'begin' in request.args.keys():
+        try:
+            begindate = dt.strptime(request.args['begin'], '%Y-%m-%d')
+            dates = [date for date in dates if date >= begindate]
+        except:
+            raise Error('wrong date format. use <YYYY-MM-DD', status_code=400)
+
+    if 'end' in request.args.keys():
+        try:
+            enddate = dt.strptime(request.args['end'], '%Y-%m-%d')
+            dates = [date for date in dates if date <= enddate]
+        except:
+            raise Error('wrong date format. use <YYYY-MM-DD', status_code=400)
+
+    datadict = {date.strftime('%Y-%m-%d') : datadict[date.strftime('%Y-%m-%d')] for date in dates}
+    return jsonify(datadict)
 
 @app.route('/catchments/<id>/geotiffs', methods=['GET'])
 def list_geotiff(id):
     if not is_deleted(id):
-        entries = query_db('select * from geotiffs where ID = ?', [id])
+        entries = query_db('select ID,catchmentid,date from geotiffs where catchmentid = ?', [id])
+        for i, entry in enumerate(entries):
+            entries[i].update({'href': url_for('show_geotiff', catchmentid=id, id=entry['ID'])})
         return jsonify(entries)
     else:
-        abort(404, 'there is no catchment with the requested id')
+        raise Error('there is no catchment with the requested id', status_code=404)
+
+
+@app.route('/catchments/<catchmentid>/geotiffs/<id>', methods=['GET'])
+def show_geotiff(id, catchmentid):
+    path = query_db('select date,filepath from geotiffs where ID = ?', [id])
+    if len(path) == 0:
+        raise Error('there is no geotiff with the requested id', status_code=404)
+
+    fullpath = os.path.join(app.config['DATASTORAGE_LOC'],path[0]['filepath'])
+
+    try:
+        with open(fullpath, 'rb') as geotiff:
+            return send_file(
+                io.BytesIO(geotiff.read()),
+                attachment_filename=path[0]['date']+'.tif',
+                mimetype='image/geotiffint16'
+            )
+    except:
+        raise Error('the server failed to locate the requested geotiff', status_code=500)
 
 @app.route('/catchments/<id>/geojson', methods=['GET'])
 def show_geojson(id):
     entry = query_db('select * from settings where ID = ? and deletion = 0', [id])
     if len(entry) == 0:
-        abort(404, 'there is no catchment with the requested id')
+        raise Error('there is no catchment with the requested id', status_code=404)
     else:
         geojson_obj = json.loads(entry[0]['geojson'])
     return jsonify(geojson_obj)
