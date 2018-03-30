@@ -340,7 +340,6 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
       rm(evi,cloudmask,watermask);gc()
       try(gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline="shapefilepath",crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768)) #Transform GTiff and crop to shapefile
       if (!file.exists(GTifflist2[i])) {
-        browser()
         filesvalid = FALSE
       }
     }
