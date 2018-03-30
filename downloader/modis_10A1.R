@@ -291,7 +291,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
     filesvalid=TRUE #help variable in case a HDF File is corrupted
     HDFlist =  observationsbydate[[k]]
     HDFlistbydateandtile <- by(as.data.frame(HDFlist), as.data.frame(HDFlist)[,"tile"], function(x) x)
-    if ((length(HDFlistbydateandtile) != length(tile@tile))) {
+    if ((length(HDFlistbydateandtile) != length(tile@tile)) | any(unlist(lapply(HDFlistbydateandtile,FUN=function(x) {is.null(x)})))) {
       cat('Some Tile are missing for date ',observationsbydate[[k]][1,'date'],'. Processing is skipped', '\n',sep='')
       next 
     } 
@@ -338,9 +338,11 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
       evi[is.na(evi) & watermask]<--32766
       writeRaster(evi,filename=GTifflist[i],format="GTiff",overwrite=TRUE, datatype="INT2S",NAflag=-32768)
       rm(evi,cloudmask,watermask);gc()
-      tryCatch({
-        gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
-      }, error = function(e) {cat('gdalwarp error:',e);filesvalid=FALSE})
+      try(gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline="shapefilepath",crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768)) #Transform GTiff and crop to shapefile
+      if (!file.exists(GTifflist2[i])) {
+        browser()
+        filesvalid = FALSE
+      }
     }
     
     # In case all Tiles of the current date are valid, mosaic them to one Gtiff File
