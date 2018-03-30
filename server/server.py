@@ -128,6 +128,17 @@ class Error(Exception):
         rv['message'] = self.message
         return rv
 
+def data_processor_status():
+    status = 'idle'
+    content = None
+    for file in os.listdir(app.config['DATASTORAGE_LOC']):
+        if file.endswith(".LOCKED"):
+            status = 'busy'
+            reader = open(os.path.join(app.config['DATASTORAGE_LOC'],file), 'r')
+            content = reader.read()
+            break
+    return {'status': status, 'output': content}
+
 @app.errorhandler(Error)
 def handle_error(error):
     response = jsonify(error.to_dict())
@@ -169,17 +180,6 @@ def data_processor_trigger():
             raise Error('the server failed to launch the data processor', status_code=500)
     else:
         raise Error('data processor is already running. Try again later', status_code=409)
-
-def data_processor_status():
-    status = 'idle'
-    content = None
-    for file in os.listdir(app.config['DATASTORAGE_LOC']):
-        if file.endswith(".LOCKED"):
-            status = 'busy'
-            reader = open(os.path.join(app.config['DATASTORAGE_LOC'],file), 'r')
-            content = reader.read()
-            break
-    return {'status': status, 'output': content}
 
 @app.route('/data_processor', methods=['GET'])
 def response_data_processor_status():
@@ -275,7 +275,6 @@ def add_catchment():
     r = show_catchment(new_id)
     return Response(response=r.response,status=201,headers=r.headers,mimetype=r.mimetype,content_type=r.content_type)
 
-
 @app.route('/catchments/<id>', methods=['GET'])
 def show_catchment(id):
     entry = query_db('select * from settings where ID = ? and deletion = 0',[id])
@@ -311,7 +310,6 @@ def list_timeseries(id):
         return jsonify(entries)
     else:
         raise Error('there is no catchment with the requested id', status_code=404)
-
 
 @app.route('/catchments/<catchmentid>/timeseries/<id>', methods=['GET'])
 def show_timeseries(id,catchmentid):
