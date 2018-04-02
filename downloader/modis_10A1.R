@@ -341,16 +341,20 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
       try(gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768)) #Transform GTiff and crop to shapefile
       if (!file.exists(GTifflist2[i])) {
         filesvalid = FALSE
+        GTifflist2[i] <- NULL
       }
     }
     
     # In case all Tiles of the current date are valid, mosaic them to one Gtiff File
     if (filesvalid) {
-      filename=paste(HDFlist$date[i],'.tif',sep='')
+      filename=paste(HDFlist$date[i],'-daily.tif',sep='')
       dstfile <- file.path(dstfolder,filename)
       mosaic_rasters(GTifflist2,dstfile,co=compressionmethod, ot="Int16",srcnodata=-32768)  #
       output <- rbind(output,data.frame(file=dstfile,date=as.Date(HDFlist$date[i]))) #TODO, date format correct?
     }
+    
+    unlink(GTifflist2)
+    unlink(GTifflist)
   }
   # Delete all temporary working data and HDF Files in the temporary folder (if argument hdfstorage is NULL)
   do.call(unlink, list(tempfolder,recursive=TRUE))

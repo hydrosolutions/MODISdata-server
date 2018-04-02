@@ -125,6 +125,10 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
     filesvalid=TRUE #help variable in case a HDF File is corrupted
     HDFlist =  observationsbydate[[k]]
     HDFlistbydateandtile <- by(as.data.frame(HDFlist), as.data.frame(HDFlist)[,"tile"], function(x) x)
+    if ((length(HDFlistbydateandtile) != length(tile@tile)) | any(unlist(lapply(HDFlistbydateandtile,FUN=function(x) {is.null(x)})))) {
+      cat('Some Tile are missing for date ',observationsbydate[[k]][1,'date'],'. Processing is skipped', '\n',sep='')
+      next 
+    } 
     GTifflist <- c()
     GTifflist2 <- c()
     
@@ -168,18 +172,21 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
       writeRaster(evi,filename=GTifflist[i],format="GTiff",datatype="INT2S",NAflag=-32768
       )
       rm(evi);gc()
-      gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768) #Transform GTiff and crop to shapefile
+      try(gdalwarp(srcfile=GTifflist[i],dstfile=GTifflist2[i],cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326", ot="Int16",dstnodata=-32768)) #Transform GTiff and crop to shapefile
+      if (!file.exists(GTifflist2[i])) {
+        filesvalid = FALSE
+        GTifflist2[i] <- NULL
+      }
     }
-
-    
-    
     # In case all Tiles of the current date are valid, mosaic them to one Gtiff File
     if (filesvalid) {
-      filename=paste(HDFlist$date[i],'.tif',sep='')
+      filename=paste(HDFlist$date[i],'-daily.tif',sep='')
       dstfile <- file.path(dstfolder,filename)
       mosaic_rasters(GTifflist2,dstfile,co=compressionmethod, ot="Int16")  #
       output <- rbind(output,data.frame(file=dstfile,date=as.Date(HDFlist$date[i]))) #TODO, date format correct?
     }
+      unlink(GTifflist2)
+      unlink(GTifflist)
   }
   
     # Delete all temporary working data and HDF Files in the temporary folder (if argument hdfstorage is NULL)

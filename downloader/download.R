@@ -8,8 +8,7 @@ try({
   setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
   source('/home/jules/Desktop/Hydromet/MODISsnow_server/MODISsnow-server/downloader/examplefiles/config.R')
   cmd = FALSE
-  }, silent = TRUE
-)
+  }, silent = TRUE)
 
 # Check validity of args
 if (cmd) {
@@ -120,11 +119,39 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     return(dem_resampled)
   }
   
+  cloud_correct <- function(newimages,previous_image=NULL,maskvalue=NA,geotiffcompression=TRUE) {
+    cat('Cloud Correcting Geotiff images ...')
+    
+    if (!is.null(previous_image)) {
+      old_r <- raster(as.character(previous_image))
+    } else {
+      old_r <- raster(as.character(newimages[1]))
+      newimages <- newimages[-1]
+    }
+    
+    old_r[old_r==maskvalue]<-NA #TODO: DOES NULL work as a condition?
+    
+    for (a in seq(length=length(newimages))) {
+      cat('..',a,sep="")
+      imagefile <- as.character(newimages[a])
+      r <- raster(imagefile)
+      mask <- (is.na(r))
+      r[r==maskvalue]=NA
+      r <- merge(r,old_r)
+      r[is.na(r)]<-maskvalue
+      r[mask]=NA
+      old_r<-r
+      remove(r);gc()
+      writeRaster(old_r,filename=imagefile,format="GTiff",overwrite=TRUE, datatype="INT2S",options=GenerateCompressionArgument(TRUE))
+    }
+    rm(old_r,mask);gc()
+    cat('..Done! \n')
+  }
+  
+  
   if (!dir.exists(storage_location)) {
     stop(paste("The path storage_location=",storage_location," does not exist",sep=""))
   }
-  
-
   
   # Check argument modis_datastorage (or set up a temporary folder) and storage_location and stop, if they do not exist. 
   if (!isString(srcstorage)) {
@@ -143,7 +170,6 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   df_delete <- dbGetQuery(db, "SELECT * FROM settings WHERE deletion=1")
   query <- dbSendStatement(db, "DELETE FROM settings WHERE deletion=1")
   dbClearResult(query)
-  #TODO: Delete timeseries reference and geotiff reference as well
   for (i in seq(length=nrow(df_delete))) {
     ID <- as.character(df_delete$ID[i])
     query <- dbSendStatement(db, sprintf("DELETE FROM geotiffs WHERE catchmentid=%s",ID))
@@ -224,8 +250,9 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
       # crop daterange if shapefiles startdate/enddate is later/earlier than startdate/enddate of downloadchunk
       daterange[1] <- max(df_dates[ID,"startdate"],downloadchunks$start[j])
       daterange[2] <- min(df_dates[ID,"enddate"],downloadchunks$end[j])
-      if (daterange[2]>=daterange[1]) { 
-        
+      if (daterange[2]<daterange[1]) {
+        cat('\n','############### Data is already up-to-date for ',name,' until ',as.character(daterange[2]),' ... ###############','\n',sep='')
+      } else { 
         # concentate datapath from entry name and storage location.
         # Create folder if does not yet exist
         datapath <- file.path(storage_location,ID)
@@ -259,50 +286,31 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
         } else {
           cat('POST-PROCESSING of new data for ',name,' ...','\n',sep='')
             # Get a list of all available rasterimages/geotiffs. Extract date vector from filenames and create dataframe with filename-date pairs.
-            gtifffiles <- list.files(datapath, pattern = "\\.tif$", full.names = TRUE)
-            dates=as.Date(sub(".tif","",basename(gtifffiles)))
+            gtifffiles <- list.files(datapath, pattern = "\\-daily.tif$", full.names = TRUE)
+            dates=as.Date(sub("-daily.tif","",basename(gtifffiles)))
             datainstorage = data.frame(file=gtifffiles, date=dates)
+            newdata = rasterimages[order(rasterimages$date, decreasing=FALSE),]
+            olddata<-datainstorage[!(datainstorage$file %in% newdata$file),]
+            if (nrow(olddata)>0) {
+              olddata = olddata[order(olddata$date, decreasing=TRUE),]
+              current_image <- olddata$file[1]
+            } else {
+              current_image <- NULL
+            }
             
             #if cloud_correct=TRUE; use last observation to fill in cloud gaps in the new observations.
             if (db_frozen$cloud_correct[i]) {
-              cat('Cloud Correcting Geotiff images ...')
-              newdata = rasterimages[order(rasterimages$date, decreasing=FALSE),]
-              olddata<-datainstorage[!(datainstorage$file %in% newdata$file),]
-              if (nrow(olddata)>0) {
-                olddata = olddata[order(olddata$date, decreasing=TRUE),]
-                old_r <- raster(as.character(olddata$file[1]))
-              } else {
-                old_r <- raster(as.character(newdata$file[1]))
-                newdata <- newdata[-1,]
-              }
-              
-              old_r[old_r==-32767]<-NA
-              
-              for (a in seq(length=nrow(newdata))) {
-                cat('..',a,sep="")
-                imagefile <- as.character(newdata$file[a])
-                r <- raster(imagefile)
-                mask <- (is.na(r))
-                r[r==-32767]=NA
-                r <- merge(r,old_r)
-                r[is.na(r)]<--32767
-                r[mask]=NA
-                old_r<-r
-                remove(r);gc()
-                writeRaster(old_r,filename=imagefile,format="GTiff",overwrite=TRUE, datatype="INT2S",NAflag=-32768,options=GenerateCompressionArgument(TRUE))
-              }
-              rm(old_r,mask);gc()
-              cat('..Done! \n')
+              cloud_correct(newimages=newdata$file,previous_image=current_image,maskvalue=-32767)
             }
+              
+              
             
             # Update timeseries.csv file with new observations
             # Read any existing timeseries file, othwerwise create empty dataframe. Extract the dates from datainstorage, for which no entry in the timeseries exists.
-            
             # If required, check if DEM exists, otherwise fetch and save it
-
-           
             
             if (db_frozen$timeseries[i]) {
+
               cat('Updating Time Series ...')
               
               df_ts_files <- dbGetQuery(db,sprintf("SELECT filepath,min_elev,max_elev FROM timeseries WHERE catchmentid=%s",ID))
@@ -383,6 +391,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
               }
             }
             
+            
             # Add rasterimages that shall not be stored and are thus no longer required after the current download/daterangechunk to the vector removefinally.
             # If cloud correct is activated, keep the most recent rasterimage, even if store_geotiff is set to FALSE
             if (!db_frozen$store_geotiff[i]) {
@@ -419,10 +428,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
         } 
         
       
-      } else {
-        cat('\n','############### Data is already up-to-date for ',name,' until ',as.character(daterange[2]),' ... ###############','\n',sep='')
-        
-        }
+      } 
     }
     # Delete temporary files after one DownloadChunk
     if (length(removefinally)>0) {
@@ -483,7 +489,7 @@ CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geot
     if (ispartof) {
       for (i in 1:nrow(availabledata)) {
         srcfile <- availabledata$file[i]
-        dstfile <- file.path(dstfolder,paste(availabledata$date[i],'.tif',sep=''))
+        dstfile <- file.path(dstfolder,paste(availabledata$date[i],'-daily.tif',sep=''))
         cat('Processing ... ',as.character(srcfile),'\n',sep='')
         gdalwarp(srcfile=srcfile,dstfile=dstfile,cutline=shapefilepath,crop_to_cutline = TRUE, t_srs="EPSG:4326",co=compressionmethod, overwrite=TRUE)
         output <- rbind(output,data.frame(file=dstfile,date=as.Date(as.character(availabledata$date[i]))))
@@ -513,8 +519,6 @@ GenerateCompressionArgument <- function(compression) {
 
 ########### 2.MAIN SCRIPT ##############
 # Read list of shapefiles
-
-
 db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
 if (length(dbListTables(db))==0) {
   cat("First startup: Initialising database")
