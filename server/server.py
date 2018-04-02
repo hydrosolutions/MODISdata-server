@@ -104,7 +104,6 @@ def shp2gson(shapefilename):
                            geometry=geom, properties=atr))
 
         # write the GeoJSON file
-    from json import dumps
     return({"type": "FeatureCollection","features": buffer})
 
 def is_deleted(id):
