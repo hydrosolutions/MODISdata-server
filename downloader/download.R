@@ -193,6 +193,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   # freeze database at this moment of time. In normal operation,  only additions to the settings can be inserted by the web service. These are thus ignored in the further execution from now.
   # However, no changes or deletions are allowed by any other code than this one here, either to the database or to the file structure.
   db_frozen = dbReadTable(db,"settings")
+  row.names(db_frozen)<-db_frozen$ID
   
   df_dates <- data.frame()
   for (i in seq(length=nrow(db_frozen))) {
