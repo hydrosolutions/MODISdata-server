@@ -365,7 +365,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                 rm(r); if (exists("dem_resampled")) {rm(dem_resampled)}; gc()
                 
                 for (p in seq(length=nrow(df_ts_files))) {
-                  newpath <- sprintf("%s/ts-%s-%s.csv",ID,df_ts_files$elev_zone[p],round(as.numeric(Sys.time())))
+                  newpath <- sprintf("%s/ts-m%s-m%s-t%s.csv",ID,df_ts_files$min_elev[p],df_ts_files$max_elev[p],round(as.numeric(Sys.time())))
                   oldpath <- as.character(df_ts_files$filepath[p])
                   ts_new <- data.frame(date=dates,value=values[,p])
                   if (file.exists(file.path(storage_location,oldpath))) {
