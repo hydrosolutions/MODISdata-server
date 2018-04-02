@@ -11,6 +11,7 @@ import os.path
 import io
 from time import sleep
 import subprocess
+from shapely.geometry import shape
 
 app = Flask(__name__)
 
@@ -228,7 +229,6 @@ def add_catchment():
     elif str(geojson_obj['crs']['properties']['name']) != 'urn:ogc:def:crs:OGC:1.3:CRS84':
         raise Error('the geojson must have the following projection: urn:ogc:def:crs:OGC:1.3:CRS84', status_code=400)
 
-    from shapely.geometry import shape
     conn = get_db()
     cursor = conn.cursor()
     result = query_db('select geojson from settings where ID = 1')
