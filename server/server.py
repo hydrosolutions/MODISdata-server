@@ -228,6 +228,17 @@ def add_catchment():
     elif str(geojson_obj['crs']['properties']['name']) != 'urn:ogc:def:crs:OGC:1.3:CRS84':
         raise Error('the geojson must have the following projection: urn:ogc:def:crs:OGC:1.3:CRS84', status_code=400)
 
+    from shapely.geometry import shape
+    conn = get_db()
+    cursor = conn.cursor()
+    result = query_db('select geojson from settings where ID = 1')
+    master_geojson = json.loads(result[0]['geojson'])
+    master_shape = shape(master_geojson['features'][0]['geometry'])
+    subregion_shape = shape(geojson_obj['features'][0]['geometry'])
+    difference_shape = subregion_shape.difference(master_shape)
+    if difference_shape.area > 0:
+        raise Error('the provided geojson polygon does not overlap with the masterregion. The server can not support this request.', status_code=400)
+
     if "store_length" in input.keys():
         try:
             store_length = int(input['store_length'])

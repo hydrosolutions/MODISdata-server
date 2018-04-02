@@ -541,5 +541,6 @@ dbDisconnect(db)
 #database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE)
 UpdateData(db = DATABASE_LOC, storage_location=DATASTORAGE_LOC, srcstorage = MODIS_DATASTORAGE, geotiff_processor=GEOTIFF_PROCESSOR, max_download_chunk = maxDOWNLOADchunk)
   
+sink()
 unlink(newlockfile)
 
