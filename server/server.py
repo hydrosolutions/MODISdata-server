@@ -1,10 +1,10 @@
-from flask import Flask, jsonify, g, abort, url_for, send_file
+from flask import Flask, jsonify, g, url_for, send_file
 import sqlite3
 import shapefile
 import geojson
 from datetime import datetime as dt
 from functools import wraps
-from flask import request, Response, make_response
+from flask import request, Response
 import json
 import csv
 import os.path
@@ -401,11 +401,4 @@ def show_geojson(id):
 
 
 if __name__ == '__main__':
-
-
-    #conn = sqlite3.connect(sqlite_file)
-    #c = conn.cursor()
-
     app.run(debug=True)
-
-    # TODO: geojson projection check, is it required? handle timeseries and geotiff requests
