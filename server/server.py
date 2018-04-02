@@ -222,8 +222,8 @@ def add_catchment():
         raise Error('the provided geojson has more than one feature. Only one feature of type polygon is allowed', status_code=400)
     elif geojson_obj['features'][0]['geometry'] is None:
         raise Error('the provided geojson must contain a feature of type polygon.', status_code=400)
-    elif geojson_obj['features'][0]['geometry']['type'] is not 'Polygon':
-        raise Error('the provided geojson must contain a feature of type polygon.', status_code=400)
+    elif geojson_obj['features'][0]['geometry']['type'] not in ['Polygon','MultiPolygon']:
+        raise Error('the provided geojson must contain a feature of type Polygon or MultiPolygon.', status_code=400)
     elif 'crs' not in geojson_obj.keys():
         raise Error('the provided geojson does not have a projection', status_code=400)
     elif str(geojson_obj['crs']['properties']['name']) != 'urn:ogc:def:crs:OGC:1.3:CRS84':
