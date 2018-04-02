@@ -129,7 +129,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
       newimages <- newimages[-1]
     }
     
-    old_r[old_r==maskvalue]<-NA #TODO: DOES NULL work as a condition?
+    old_r[old_r==maskvalue]<-NA 
     
     for (a in seq(length=length(newimages))) {
       cat('..',a,sep="")
@@ -531,7 +531,7 @@ if (length(dbListTables(db))==0) {
   
   geojson_masterregion <- as.json(MASTERREGION_SHAPEFILE)
   
-  query <- dbSendStatement(conn = db,sprintf("INSERT INTO settings (ID, name, geojson, is_subregion_of, store_geotiff, earliestdate, latestdate) VALUES (1,'MASTERREGION','%s',NULL,1,'%s','%s');",geojson_masterregion,MASTERREGION_EARLIEST_DATE,MASTERREGION_LATEST_DATE))
+  query <- dbSendStatement(conn = db,sprintf("INSERT INTO settings (ID, name, geojson, is_subregion_of, store_geotiff, earliestdate, latestdate, timeseries, cloud_correct) VALUES (1,'MASTERREGION','%s',NULL,1,'%s','%s',0,0);",geojson_masterregion,MASTERREGION_EARLIEST_DATE,MASTERREGION_LATEST_DATE))
   dbClearResult(query)
 } else if (!all(sort(dbListTables(db)) == sort(c("settings","geotiffs","timeseries")))) {
   stop("Database is invalid or corrupted. Please check the filepath in DATABASE_LOC")
