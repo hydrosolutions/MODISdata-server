@@ -370,7 +370,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                   ts_new <- data.frame(date=dates,value=values[,p])
                   if (file.exists(file.path(storage_location,oldpath))) {
                     ts <-  read.csv(file.path(storage_location,oldpath),header=TRUE,stringsAsFactors = FALSE)
-                    ts <- ts[as.Date(ts$date)<=last_obs_ts]
+                    ts <- ts[as.Date(ts$date)<=last_obs_ts,]
                     ts_new <- rbind(ts,ts_new)
                   }
                   write.csv(ts_new,file = file.path(storage_location,newpath),row.names=FALSE, na="NaN") 
