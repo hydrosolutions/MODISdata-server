@@ -1,4 +1,5 @@
-from flask import Flask, jsonify, g, url_for, send_file, JSONEncoder
+from flask import Flask, jsonify, g, url_for, send_file
+from flask.json import JSONEncoder
 import sqlite3
 import shapefile
 import geojson
