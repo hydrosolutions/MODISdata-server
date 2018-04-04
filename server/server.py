@@ -334,6 +334,8 @@ def list_timeseries(id):
 
 @app.route('/catchments/<catchmentid>/timeseries/<id>', methods=['GET'])
 def show_timeseries(id,catchmentid):
+    if is_deleted(catchmentid):
+        raise Error('there is no catchment with the requested id', status_code=404)
     path = query_db('select filepath from timeseries where ID = ?', [id])
     if len(path)==0:
         raise Error('there is no timeseries with the requested id', status_code=404)
@@ -375,15 +377,41 @@ def show_timeseries(id,catchmentid):
 def list_geotiff(id):
     if not is_deleted(id):
         entries = query_db('select ID,catchmentid,date from geotiffs where catchmentid = ?', [id])
+
+        begindate = dt.min
+        enddate = dt.max
+        argkeys = request.args.keys()
+        if len(argkeys) - argkeys.count('begin') - argkeys.count('end') > 0:
+            raise Error('the server could not understand all of the provided query parameters. Use only begin and end.',
+                        status_code=400)
+
+        if 'begin' in request.args.keys():
+            try:
+                begindate = dt.strptime(request.args['begin'], '%Y-%m-%d')
+            except:
+                raise Error('wrong date format. use <YYYY-MM-DD', status_code=400)
+
+        if 'end' in request.args.keys():
+            try:
+                enddate = dt.strptime(request.args['end'], '%Y-%m-%d')
+            except:
+                raise Error('wrong date format. use <YYYY-MM-DD', status_code=400)
+
+        selected = list()
+
         for i, entry in enumerate(entries):
             entries[i].update({'href': url_for('show_geotiff', catchmentid=id, id=entry['ID'])})
-        return jsonify(entries)
+            selected.append(i) if begindate<=dt.strptime(entries[i]['date'], '%Y-%m-%d')<=enddate else False
+
+        return jsonify([entries[i] for i in selected])
     else:
         raise Error('there is no catchment with the requested id', status_code=404)
 
 
 @app.route('/catchments/<catchmentid>/geotiffs/<id>', methods=['GET'])
 def show_geotiff(id, catchmentid):
+    if is_deleted(catchmentid):
+        raise Error('there is no catchment with the requested id', status_code=404)
     path = query_db('select date,filepath from geotiffs where ID = ?', [id])
     if len(path) == 0:
         raise Error('there is no geotiff with the requested id', status_code=404)
