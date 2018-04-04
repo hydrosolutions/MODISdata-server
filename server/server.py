@@ -165,7 +165,7 @@ def data_processor_trigger():
         args = configfile
         cmd =  'Rscript %s %s' % (path2script, args)
         try:
-            independent_process = subprocess.Popen(cmd,shell=True)
+            independent_process = subprocess.Popen(['nohup', 'Rscript', path2script, args], stdout=None, stderr=None, preexec_fn=os.setpgrp)
             waiting=0
             while response['status']=='idle':
                 response = data_processor_status()
