@@ -42,13 +42,14 @@ def load_config(configfile,flaskapp):
             raise(Error)
     flaskapp.config.update(configvariables)
     return None
-config = load_config(configfile, app)
+
+load_config(configfile, app)
 
 # Database routines
 def get_db():
     db = getattr(g, '_database', None)
     if db is None:
-        db = g._database = sqlite3.connect(app.config['DATABASE_LOC'])
+        db = sqlite3.connect(app.config['DATABASE_LOC'])
     return db
 
 @app.teardown_appcontext
@@ -83,7 +84,6 @@ class CustomJSONEncoder(JSONEncoder):
             return list(iterable)
         return JSONEncoder.default(self, obj)
 
-app = Flask(__name__)
 app.json_encoder = CustomJSONEncoder
 
 # Authentification routines
