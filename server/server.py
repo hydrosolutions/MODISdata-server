@@ -1,5 +1,4 @@
 from flask import Flask, jsonify, g, url_for, send_file
-from flask.json import JSONEncoder
 import sqlite3
 import shapefile
 import geojson
@@ -13,6 +12,7 @@ import io
 from time import sleep
 import subprocess
 from shapely.geometry import shape
+from math import isnan
 
 app = Flask(__name__)
 
@@ -70,21 +70,6 @@ def query_db(query, args=(), one=False):
         out.append(make_dicts(cur,row))
     cur.close()
     return (out[0] if out else None) if one else out
-
-# Custom Encoder for NaNs
-class CustomJSONEncoder(JSONEncoder):
-    def default(self, obj):
-        try:
-            if obj=='NaN':
-                return None
-            iterable = iter(obj)
-        except TypeError:
-            pass
-        else:
-            return list(iterable)
-        return JSONEncoder.default(self, obj)
-
-app.json_encoder = CustomJSONEncoder
 
 # Authentification routines
 def check_auth(username, password):
@@ -367,7 +352,7 @@ def show_timeseries(id,catchmentid):
             header = reader.next()
             datepos = header.index('date')
             valuepos = 1 - datepos
-            datadict = {rows[datepos]: float(rows[valuepos]) for rows in reader}
+            datadict = {rows[datepos]: None if isnan(float(rows[valuepos])) else float(rows[valuepos]) for rows in reader}
     except:
         raise Error('the server failed to locate the requested timeseries', status_code=500)
 
