@@ -336,7 +336,7 @@ def list_timeseries(id):
 def show_timeseries(id,catchmentid):
     if is_deleted(catchmentid):
         raise Error('there is no catchment with the requested id', status_code=404)
-    path = query_db('select filepath from timeseries where ID = ?', [id])
+    path = query_db('select filepath from timeseries where ID = ? and catchmentid = catchmentid', [id])
     if len(path)==0:
         raise Error('there is no timeseries with the requested id', status_code=404)
 
@@ -412,7 +412,7 @@ def list_geotiff(id):
 def show_geotiff(id, catchmentid):
     if is_deleted(catchmentid):
         raise Error('there is no catchment with the requested id', status_code=404)
-    path = query_db('select date,filepath from geotiffs where ID = ?', [id])
+    path = query_db('select date,filepath from geotiffs where ID = ? and catchmentid = catchmentid', [id])
     if len(path) == 0:
         raise Error('there is no geotiff with the requested id', status_code=404)
 
