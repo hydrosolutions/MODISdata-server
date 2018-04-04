@@ -71,24 +71,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   #
   # TODO: HOW DOES IT WORK?
   #
-  
-  isString <- function(value) {
-    # Can value be read as a string or is it NA,NULL or empty?
-    #
-    # Args:
-    #   value: the data object or a vector of data objects to be checked
-    # Returns:
-    #   a vector of TRUE or FALSE
-    
-    sapply(value, USE.NAMES = FALSE, FUN = function(x) {
-      if (is.na(x) || is.null(x) || x == "") {
-        return(FALSE)
-      } else {
-        return(TRUE)
-      }
-    })
-  }
-  
+
   isDate <- function(value) {
     # Can value be converted to a Date object?
     #
@@ -155,7 +138,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   }
   
   # Check argument modis_datastorage (or set up a temporary folder) and storage_location and stop, if they do not exist. 
-  if (!isString(srcstorage)) {
+  if (is.null(srcstorage)) {
     localArcPath <- file.path(tempdir(), "MODIS")
     dir.create(localArcPath, recursive = TRUE)
     cat("Persistent Storage of MODIS RAW Data is turned off. Configurate MODIS_DATASTORAGE to a valid path to enable it.")
@@ -274,7 +257,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
         # fetch the entry of the parentregion if current entry is a subregion. 
         subregion <- as.character(db_frozen$is_subregion_of[i])
         # If the current entry is a a subregion, fetch data from parent region datapath. Otherwise access Online Dataserver
-        if (isString(subregion)) {
+        if (!is.na(subregion)) {
           parentregion <- db_frozen[db_frozen$ID==subregion,]
           cat('... using data from PARENTREGION with ID ',as.character(parentregion$ID),' ...','\n',sep='')
           srcdatapath <- file.path(storage_location,as.character(parentregion$ID))
