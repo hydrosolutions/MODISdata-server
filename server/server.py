@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, g, url_for, send_file
+from flask import Flask, jsonify, g, url_for, send_file, JSONEncoder
 import sqlite3
 import shapefile
 import geojson
@@ -69,6 +69,21 @@ def query_db(query, args=(), one=False):
     cur.close()
     return (out[0] if out else None) if one else out
 
+# Custom Encoder for NaNs
+class CustomJSONEncoder(JSONEncoder):
+    def default(self, obj):
+        try:
+            if obj=='NaN':
+                return None
+            iterable = iter(obj)
+        except TypeError:
+            pass
+        else:
+            return list(iterable)
+        return JSONEncoder.default(self, obj)
+
+app = Flask(__name__)
+app.json_encoder = CustomJSONEncoder
 
 # Authentification routines
 def check_auth(username, password):
