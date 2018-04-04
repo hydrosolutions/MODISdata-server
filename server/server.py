@@ -129,15 +129,19 @@ class Error(Exception):
         return rv
 
 def data_processor_status():
-    status = 'idle'
+    status = 'IDLE'
     content = None
+    uptime = None
     for file in os.listdir(app.config['DATASTORAGE_LOC']):
         if file.endswith(".LOCKED"):
-            status = 'busy'
-            reader = open(os.path.join(app.config['DATASTORAGE_LOC'],file), 'r')
+            status = 'RUNNING'
+            fullpath = os.path.join(app.config['DATASTORAGE_LOC'],file)
+            reader = open(fullpath, 'r')
             content = reader.read()
+            starttime = dt.strptime(file.replace(".LOCKED",""), "%Y-%m-%d %H:%M:%S")
+            uptime = dt.today()-starttime
             break
-    return {'status': status, 'output': content}
+    return {'status': status, 'output': content, 'uptime': str(uptime)}
 
 @app.errorhandler(Error)
 def handle_error(error):
@@ -160,12 +164,12 @@ def status():
 @requires_auth
 def data_processor_trigger():
     response = data_processor_status()
-    if response['status']=='idle':
-        trigger = app.config['DOWNLOAD_SCRIPT_LOC']
+    if response['status']=='IDLE':
+        trigger = app.config['DOWNLOAD_TRIGGER']
         try:
-            subprocess.Popen(trigger)
+            process=subprocess.Popen(trigger, shell=True)
             waiting=0
-            while response['status']=='idle':
+            while response['status']=='IDLE':
                 response = data_processor_status()
                 if waiting < 5:
                     sleep(0.5); waiting=waiting+0.5
@@ -175,7 +179,7 @@ def data_processor_trigger():
             response.status_code = 202
             return response
         except:
-            raise Error('the server failed to launch the data processor', status_code=500)
+            raise Error(process, status_code=500)
     else:
         raise Error('data processor is already running. Try again later', status_code=409)
 

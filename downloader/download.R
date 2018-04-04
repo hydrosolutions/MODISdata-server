@@ -40,7 +40,7 @@ if (length(oldlockfile)>0) {
     file.remove(oldlockfile)
   }
 }
-newlockfile <- file.path(DATASTORAGE_LOC,paste(Sys.Date(),".LOCKED",sep=""))
+newlockfile <- file.path(DATASTORAGE_LOC,paste(format(Sys.time(), "%Y-%m-%d %H:%M:%S"),".LOCKED",sep=""))
 file.create(newlockfile)
 sink(file=newlockfile,split=TRUE,append = TRUE, type=c('output','message'))
 
