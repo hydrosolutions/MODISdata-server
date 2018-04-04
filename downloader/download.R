@@ -44,6 +44,7 @@ newlockfile <- file.path(DATASTORAGE_LOC,paste(Sys.Date(),".LOCKED",sep=""))
 file.create(newlockfile)
 sink(file=newlockfile,split=TRUE,append = TRUE, type=c('output','message'))
 
+
 source(GEOTIFF_PROCESSOR)
 library(elevatr)
 library(RSQLite)
@@ -166,6 +167,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   
   ####################################################################################################
   db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
+  on.exit({if (exists('db')) {dbDisconnect(db)}}, add=TRUE)
   
   df_delete <- dbGetQuery(db, "SELECT * FROM settings WHERE deletion=1")
   query <- dbSendStatement(db, "DELETE FROM settings WHERE deletion=1")
@@ -438,7 +440,6 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
       unlink(removefinally) 
     }
   }
-  dbDisconnect(db)
 }
 
 CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geotiff_compression=FALSE) {
@@ -521,6 +522,7 @@ GenerateCompressionArgument <- function(compression) {
 ########### 2.MAIN SCRIPT ##############
 # Read list of shapefiles
 db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
+
 if (length(dbListTables(db))==0) {
   cat("First startup: Initialising database")
   query <- dbSendStatement(conn = db,"CREATE TABLE settings (ID INTEGER PRIMARY KEY,name TEXT, geojson TEXT NOT NULL, is_subregion_of INTEGER DEFAULT 1, store_geotiff INTEGER DEFAULT 1, store_length INTEGER, cloud_correct INTEGER DEFAULT 1, timeseries INTEGER DEFAULT 1, elev_split INTEGER, earliestdate TEXT DEFAULT '2000-01-01', latestdate TEXT, deletion INTEGER DEFAULT 0, last_obs_ts TEXT, last_obs_gtif TEXT)")

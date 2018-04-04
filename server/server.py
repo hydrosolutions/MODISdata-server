@@ -22,7 +22,7 @@ configfile = "/home/jules/Desktop/Hydromet/MODISsnow_server/MODISsnow-server/dow
 download_stdout = None
 
 def load_config(configfile,flaskapp):
-    required = ["MODIS_DATASTORAGE", "DATASTORAGE_LOC", "DATABASE_LOC","DOWNLOAD_SCRIPT_LOC","APP_USER","APP_PW"]
+    required = ["MODIS_DATASTORAGE", "DATASTORAGE_LOC", "DATABASE_LOC","DOWNLOAD_TRIGGER","APP_USER","APP_PW"]
     input = dict()
     configvariables = dict()
     with open(configfile) as f:
@@ -161,11 +161,9 @@ def status():
 def data_processor_trigger():
     response = data_processor_status()
     if response['status']=='idle':
-        path2script = app.config['DOWNLOAD_SCRIPT_LOC']
-        args = configfile
-        cmd =  'Rscript %s %s' % (path2script, args)
+        trigger = app.config['DOWNLOAD_SCRIPT_LOC']
         try:
-            independent_process = subprocess.Popen(['nohup', 'Rscript', path2script, args], stdout=None, stderr=None, preexec_fn=os.setpgrp)
+            subprocess.Popen(trigger)
             waiting=0
             while response['status']=='idle':
                 response = data_processor_status()
