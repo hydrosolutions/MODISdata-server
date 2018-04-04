@@ -79,10 +79,7 @@ def check_auth(username, password):
 
 def authenticate():
     """Sends a 401 response that enables basic auth"""
-    return Response(
-    'Could not verify your access level for that URL.\n'
-    'You have to login with proper credentials', 401,
-    {'WWW-Authenticate': 'Basic realm="Login Required"'})
+    raise Error('Could not verify your access level for that URL. You have to login with proper credentials', status_code=401)
 
 def requires_auth(f):
     @wraps(f)
@@ -151,8 +148,20 @@ def handle_error(error):
 
 @app.errorhandler(404)
 def handle_error(error):
-    response = jsonify({'message': 'not found'})
+    response = jsonify({'message': 'Not Found'})
     response.status_code = 404
+    return response
+
+@app.errorhandler(500)
+def handle_error(error):
+    response = jsonify({'message': 'Internal Server Error'})
+    response.status_code = 500
+    return response
+
+@app.errorhandler(401)
+def handle_error(error):
+    response = jsonify({'message': 'Unauthorized'})
+    response.status_code = 401
     return response
 
 @app.route('/', methods=['GET'])
