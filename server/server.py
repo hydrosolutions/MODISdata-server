@@ -343,8 +343,8 @@ def show_timeseries(id,catchmentid):
     fullpath = os.path.join(app.config['DATASTORAGE_LOC'],path[0]['filepath'])
 
     argkeys = request.args.keys()
-    if len(argkeys)- argkeys.count('begin') - argkeys.count('end') > 0:
-        raise Error('the server could not understand all of the provided query parameters. Use only begin and end.', status_code=400)
+    if len(argkeys)- argkeys.count('from') - argkeys.count('to') > 0:
+        raise Error('the server could not understand all of the provided query parameters. Use only from and to.', status_code=400)
     try:
         with open(fullpath) as csvfile:
             reader = csv.reader(csvfile)
@@ -356,16 +356,16 @@ def show_timeseries(id,catchmentid):
         raise Error('the server failed to locate the requested timeseries', status_code=500)
 
     dates = [dt.strptime(key, '%Y-%m-%d') for key in datadict.keys()]
-    if 'begin' in request.args.keys():
+    if 'from' in request.args.keys():
         try:
-            begindate = dt.strptime(request.args['begin'], '%Y-%m-%d')
+            begindate = dt.strptime(request.args['from'], '%Y-%m-%d')
             dates = [date for date in dates if date >= begindate]
         except:
             raise Error('wrong date format. use <YYYY-MM-DD', status_code=400)
 
-    if 'end' in request.args.keys():
+    if 'to' in request.args.keys():
         try:
-            enddate = dt.strptime(request.args['end'], '%Y-%m-%d')
+            enddate = dt.strptime(request.args['to'], '%Y-%m-%d')
             dates = [date for date in dates if date <= enddate]
         except:
             raise Error('wrong date format. use <YYYY-MM-DD', status_code=400)
@@ -381,19 +381,19 @@ def list_geotiff(id):
         begindate = dt.min
         enddate = dt.max
         argkeys = request.args.keys()
-        if len(argkeys) - argkeys.count('begin') - argkeys.count('end') > 0:
-            raise Error('the server could not understand all of the provided query parameters. Use only begin and end.',
+        if len(argkeys) - argkeys.count('from') - argkeys.count('to') > 0:
+            raise Error('the server could not understand all of the provided query parameters. Use only from and to.',
                         status_code=400)
 
-        if 'begin' in request.args.keys():
+        if 'from' in request.args.keys():
             try:
-                begindate = dt.strptime(request.args['begin'], '%Y-%m-%d')
+                begindate = dt.strptime(request.args['from'], '%Y-%m-%d')
             except:
                 raise Error('wrong date format. use <YYYY-MM-DD', status_code=400)
 
-        if 'end' in request.args.keys():
+        if 'to' in request.args.keys():
             try:
-                enddate = dt.strptime(request.args['end'], '%Y-%m-%d')
+                enddate = dt.strptime(request.args['to'], '%Y-%m-%d')
             except:
                 raise Error('wrong date format. use <YYYY-MM-DD', status_code=400)
 
