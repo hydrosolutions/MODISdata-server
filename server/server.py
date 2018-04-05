@@ -13,6 +13,9 @@ from time import sleep
 import subprocess
 from shapely.geometry import shape
 from math import isnan
+from werkzeug.utils import secure_filename
+from tempfile import mkdtemp
+from shutil import rmtree
 
 app = Flask(__name__)
 
@@ -91,7 +94,7 @@ def requires_auth(f):
         return f(*args, **kwargs)
     return decorated
 
-def shp2gson(shapefilename):
+def shp2json(shapefilename):
     reader = shapefile.Reader(shapefilename)
     fields = reader.fields[1:]
     field_names = [field[0] for field in fields]
@@ -439,6 +442,58 @@ def show_geojson(id):
     return jsonify(geojson_obj)
 
 
+# Shapefile Converter
+
+
+UPLOAD_FOLDER = None
+ALLOWED_EXTENSIONS = set(['shp','shx','dbf'])
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/shapefile2json', methods=['GET','POST'])
+def shapefile2json():
+    shp_dict = dict()
+    if request.method == 'POST':
+        # check if the post request has the file part
+        if 'files' not in request.files:
+            raise Error('there is no files attribute in the the request',status_code=400)
+        filelist = request.files.getlist('files')
+        tempdir = mkdtemp()
+        for file in filelist:
+            filename = secure_filename(file.filename)
+            if not hasattr(file, 'filename') or str(file.filename) == '':
+                raise Error('filenames are empty', status_code=400)
+            elif not allowed_file(filename):
+                raise Error('file extension is not allowed. Only shp,shx,dbf are allowed.', status_code=400)
+            else:
+                path = os.path.join(tempdir,filename)
+                file.save(path)
+                shp_dict.update({filename.rsplit('.', 1)[1].lower(): path})
+
+        if set(['shx', 'shp', 'dbf']) == set(shp_dict.keys()):
+            try:
+                geojson = shp2json(shp_dict['shp'])
+                rmtree(tempdir, ignore_errors=True)
+            except:
+                raise Error('there was an error converting the provided shapefile data.', status_code=400)
+        else:
+            raise Error('One of the following files is missing: shp,shx or dbf', status_code=400)
+        return jsonify(geojson)
+    else:
+        return '''
+            <!doctype html>
+            <title>shapefile 2 geojson converter</title>
+            <h2>convert shapefile to geojson:</h2>
+            <form method=post enctype=multipart/form-data>
+              <p>shp: <input type=file name=files><br>shx: <input type=file name=files><br>dbf: <input type=file name=files>
+                 <input type=submit value=Upload><br><br># with curl: curl -i -X POST -F files=@&lt;path.shp&gt; -F files=@&lt;path.shx&gt; -F files=@&lt;path.dbf&gt; &lt;this:url&gt;
+
+            </form>
+            '''
 
 if __name__ == '__main__':
     app.run(debug=True)
