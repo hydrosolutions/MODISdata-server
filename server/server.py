@@ -1,6 +1,5 @@
 from flask import Flask, jsonify, g, url_for, send_file
 import sqlite3
-import shapefile
 import geojson
 from datetime import datetime as dt
 from functools import wraps
@@ -14,8 +13,10 @@ import subprocess
 from shapely.geometry import shape
 from math import isnan
 from werkzeug.utils import secure_filename
-from tempfile import mkdtemp
+from tempfile import mkdtemp,NamedTemporaryFile
 from shutil import rmtree
+import geopandas
+
 
 app = Flask(__name__)
 
@@ -95,18 +96,13 @@ def requires_auth(f):
     return decorated
 
 def shp2json(shapefilename):
-    reader = shapefile.Reader(shapefilename)
-    fields = reader.fields[1:]
-    field_names = [field[0] for field in fields]
-    buffer = []
-    for sr in reader.shapeRecords():
-        atr = dict(zip(field_names, sr.record))
-        geom = sr.shape.__geo_interface__
-        buffer.append(dict(type="Feature", \
-                           geometry=geom, properties=atr))
-
-        # write the GeoJSON file
-    return({"type": "FeatureCollection","features": buffer})
+    geodataframe = geopandas.read_file(shapefilename)
+    geodataframe_4326 = geodataframe.to_crs({'init': 'epsg:4326'})
+    tempfile = NamedTemporaryFile();tempfile.close()
+    geodataframe_4326.to_file(tempfile.name,driver='GeoJSON')
+    with open(tempfile.name) as f:
+        gj = geojson.load(f)
+    return(gj)
 
 def is_deleted(id):
     res = query_db('select deletion from settings where ID = ?', [id])
@@ -130,12 +126,12 @@ class Error(Exception):
         return rv
 
 def data_processor_status():
-    status = 'IDLE'
+    status = 'idle'
     content = None
     uptime = None
     for file in os.listdir(app.config['DATASTORAGE_LOC']):
         if file.endswith(".LOCKED"):
-            status = 'RUNNING'
+            status = 'running'
             fullpath = os.path.join(app.config['DATASTORAGE_LOC'],file)
             reader = open(fullpath, 'r')
             content = reader.read()
@@ -168,6 +164,12 @@ def handle_error(error):
     response.status_code = 401
     return response
 
+@app.errorhandler(405)
+def handle_error(error):
+    response = jsonify({'message': 'Method Not Allowed'})
+    response.status_code = 405
+    return response
+
 @app.route('/', methods=['GET'])
 def status():
     # TODO: Add filesystem usage to status info?
@@ -177,12 +179,12 @@ def status():
 @requires_auth
 def data_processor_trigger():
     response = data_processor_status()
-    if response['status']=='IDLE':
+    if response['status']=='idle':
         trigger = app.config['DOWNLOAD_TRIGGER']
         try:
             process=subprocess.Popen(trigger, shell=True)
             waiting=0
-            while response['status']=='IDLE':
+            while response['status']=='idle':
                 response = data_processor_status()
                 if waiting < 5:
                     sleep(0.5); waiting=waiting+0.5
@@ -194,7 +196,7 @@ def data_processor_trigger():
         except:
             raise Error(process, status_code=500)
     else:
-        raise Error('data processor is already running. Try again later', status_code=409)
+        api.abort(code=409, message='data processor is already running. Try again later')
 
 @app.route('/data_processor', methods=['GET'])
 def response_data_processor_status():
@@ -446,7 +448,7 @@ def show_geojson(id):
 
 
 UPLOAD_FOLDER = None
-ALLOWED_EXTENSIONS = set(['shp','shx','dbf'])
+ALLOWED_EXTENSIONS = set(['shp','shx','dbf','prj'])
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -468,20 +470,20 @@ def shapefile2json():
             if not hasattr(file, 'filename') or str(file.filename) == '':
                 raise Error('filenames are empty', status_code=400)
             elif not allowed_file(filename):
-                raise Error('file extension is not allowed. Only shp,shx,dbf are allowed.', status_code=400)
+                raise Error('file extension is not allowed. Only shp,shx,dbf,prj are allowed.', status_code=400)
             else:
                 path = os.path.join(tempdir,filename)
                 file.save(path)
                 shp_dict.update({filename.rsplit('.', 1)[1].lower(): path})
 
-        if set(['shx', 'shp', 'dbf']) == set(shp_dict.keys()):
+        if set(['shx', 'shp', 'dbf','prj']) == set(shp_dict.keys()):
             try:
                 geojson = shp2json(shp_dict['shp'])
                 rmtree(tempdir, ignore_errors=True)
             except:
-                raise Error('there was an error converting the provided shapefile data.', status_code=400)
+                raise Error('there was an error converting the provided shapefile data.', status_code=500)
         else:
-            raise Error('One of the following files is missing: shp,shx or dbf', status_code=400)
+            raise Error('One of the following files is missing: shp,shx,prj or dbf', status_code=400)
         return jsonify(geojson)
     else:
         return '''
@@ -489,7 +491,7 @@ def shapefile2json():
             <title>shapefile 2 geojson converter</title>
             <h2>convert shapefile to geojson:</h2>
             <form method=post enctype=multipart/form-data>
-              <p>shp: <input type=file name=files><br>shx: <input type=file name=files><br>dbf: <input type=file name=files>
+              <p>shp: <input type=file name=files><br>shx: <input type=file name=files><br>dbf: <input type=file name=files>prj: <input type=file name=files>
                  <input type=submit value=Upload><br><br># with curl: curl -i -X POST -F files=@&lt;path.shp&gt; -F files=@&lt;path.shx&gt; -F files=@&lt;path.dbf&gt; &lt;this:url&gt;
 
             </form>
