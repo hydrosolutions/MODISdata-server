@@ -15,7 +15,7 @@ Provide a name for the catchment and the geojson, that defines the spatial exten
 ```json
 {
     "name": "<catchment name>",
-    "geojson": geojson
+    "geojson": <geojson>
 }
 ```
 
@@ -30,7 +30,7 @@ Provide a name for the catchment and the geojson, that defines the spatial exten
 ```json
 {
     "name": "Kyrgyzstan",
-    "geojson": geojson,
+    "geojson": <geojson>,
     "elev_split" : 1000,
     "earliestdate": "2014-01-01"
 }

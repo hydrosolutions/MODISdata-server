@@ -18,9 +18,10 @@ Triggers the immediate execution of the data processor. Can be used e.g. when ne
 ```json
 {
   "output": "<data processor messages>", 
-  "status": "running", 
-  "uptime": "11:05:46.059370"
+  "status": "RUNNING", 
+  "uptime": "0:00:00.665268"
 }
+
 ```
 ## Error Responses
 

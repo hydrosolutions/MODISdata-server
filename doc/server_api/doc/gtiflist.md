@@ -1,7 +1,7 @@
 ﻿
 # Geotiff List
 
-Used to collect a Token for a registered User.
+Retrieve a list of all available geotiff data for the specific catchment
 
 **URL** : `/catchments/<catchmentid>/geotiffs`
 
