@@ -196,7 +196,7 @@ def data_processor_trigger():
         except:
             raise Error(process, status_code=500)
     else:
-        api.abort(code=409, message='data processor is already running. Try again later')
+        raise Error('data processor is already running. Try again later', status_code=409)
 
 @app.route('/data_processor', methods=['GET'])
 def response_data_processor_status():
