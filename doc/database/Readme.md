@@ -40,4 +40,3 @@ rem. TYPE BOOLEAN is actually type INTEGER restricted to 0 and 1
 **elev_zone** : INTEGER: an identifier of the elevation zone for which this timeseries is valid
 **min_elev** : INTEGER: The minimum elevation in meters of the  zone for which this timeseries is valid
 **max_elev** : INTEGER: The maximum elevation in meters of the zone for which this timeseries is valid
-- 
