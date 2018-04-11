@@ -212,7 +212,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     }
     
     startdate <- min(last_obs_gtif,last_obs_ts)+1
-    enddate <- ifelse(is.na(max_obs),today(),max_obs)
+    enddate <- ifelse(is.infinite(max_obs),today(),max_obs)
     
     df <- data.frame(ID = db_frozen$ID[i], startdate=startdate, enddate = enddate)
     df_dates <- rbind(df_dates,df)
