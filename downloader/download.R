@@ -289,7 +289,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
             olddata<-datainstorage[!(datainstorage$file %in% newdata$file),]
             if (nrow(olddata)>0) {
               olddata = olddata[order(olddata$date, decreasing=TRUE),]
-              current_image <- olddata$file[1]
+              current_image <- as.character(olddata$file[1])
             } else {
               current_image <- NULL
             }
