@@ -2,11 +2,11 @@
 # Database, SQLITE
 
 
-#### Tables
+### Tables
 
 Tables: settings, geotiffs, timeseries
 
-#### settings
+### settings
 
 This tables is the catchment index.
 rem. TYPE BOOLEAN is actually type INTEGER restricted to 0 and 1
@@ -25,14 +25,14 @@ rem. TYPE BOOLEAN is actually type INTEGER restricted to 0 and 1
 **last_obs_ts** : TEXT in format "YYYY-MM-DD": the date of the most recent timeseries datapoint  
 **last_obs_gtif** : TEXT in format "YYYY-MM-DD": the date of the most recent geotiff datapoint  
 
-#### geotiffs
+### geotiffs
 
 **ID** : INTEGER: automatically set  
 **filepath** : TEXT: the path to the corresponding geotiff  
 **catchmentid** : INTEGER: The ID of the corresponding catchment   entry
 **date** : TEXT in format "YYYY-MM-DD": The date of the observation  
 
-#### timeseries
+### timeseries
 
 **ID** : INTEGER: automatically set  
 **filepath** : TEXT: the path to the corresponding timeseries csv file  
