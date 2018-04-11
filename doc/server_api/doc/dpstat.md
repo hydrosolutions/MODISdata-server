@@ -27,7 +27,7 @@ or
 ```json
 {
   "output": null, 
-  "status": "IDLE", 
+  "status": "idle", 
   "uptime": "None"
 }
 ```

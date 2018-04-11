@@ -35,3 +35,8 @@ Closed endpoints require basic authentication, e.g. curl -u \<user>:\<password> 
 ### Data Processor
 
 * [Trigger Execution](doc/dpexec.md) : `PUT /data_processor`
+
+## Error Response
+
+The error responses to expect are listed in each description. Every error response contains a json in its body with the field "message". This field gives more detailed information about what went wrong and might help to identify and solve the problem.
+

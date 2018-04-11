@@ -2,7 +2,7 @@
 # config.R
 
 #### MODIS_DATASTORAGE
-The location where the raw MODIS tiles should be stored. Warning: This requires a lot of disk space. Set value to <NULL> when no persistent storage should be used.
+The location where the raw MODIS tiles should be stored. Warning: This requires a lot of disk space. Set value to NULL when no persistent storage should be used.
 
 #### DATASTORAGE_LOC
 The path to a folder where the processed data are going to be stored

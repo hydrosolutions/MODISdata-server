@@ -73,11 +73,3 @@ Provide a name for the catchment and the geojson, that defines the spatial exten
 **Condition** : Invalid data in POST request. 
 
 **Code** : `400 BAD REQUEST`
-
-**Content** :
-
-```json
-{
-  "message": "the geojson must have the following projection: urn:ogc:def:crs:OGC:1.3:CRS84"
-}
-```
