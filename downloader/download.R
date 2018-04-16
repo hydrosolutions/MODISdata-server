@@ -33,12 +33,12 @@ if (cmd) {
 
 # Check if the DATASTORAGE_LOC is currently used by another instance of this script. 
 # Check if there is a lockfile and if yes, stop execution. Else create a lockfile with the current date&time as filename
-# Remark: If lockfile is found but older than 3 days, overwrite it. Most probably the last execution fo download.R was interrupted.
+# Remark: If lockfile is found but last modification is older than 1h, overwrite it. Most probably the last execution fo download.R was interrupted.
 oldlockfile <- list.files(DATASTORAGE_LOC,pattern="*.LOCKED", full.names = TRUE)
 if (length(oldlockfile)>0) {
   oldlockfile <- oldlockfile[1]
-  locked_date <- as.Date(gsub(".LOCKED","",basename(oldlockfile)))
-  if (Sys.Date() - locked_date < 3) {
+  locked_datetime <- file.info(oldlockfile)$mtime
+  if (difftime(Sys.time(),locked_datetime,units="secs") < 3600) {
     stop("Processing has been terminated. Another process is locking the storage_location.")
   } else {
     file.remove(oldlockfile)
