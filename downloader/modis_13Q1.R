@@ -77,10 +77,9 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
   setwd(tempfolder)
   
   if (!is.null(srcstorage)) {
-    capture.output(capture.output(MODISoptions(quiet=TRUE,localArcPath=srcstorage,save=FALSE),file='NULL', type="message"),file='NULL') #capture.output to drop all the initiliastion messages of MODIS package
+    capture.output(capture.output(MODISoptions(quiet=TRUE,localArcPath=srcstorage,save=FALSE,MODISserverOrder = "LPDAAC", stubbornness = 3),file='NULL', type="message"),file='NULL') #capture.output to drop all the initiliastion messages of MODIS package
   } else {
-    capture.output(capture.output(MODISoptions(quiet=TRUE,localArcPath=tempfolder,save=FALSE),file='NULL', type="message"),file='NULL')
-    checkHDFintegrity()
+    capture.output(capture.output(MODISoptions(quiet=TRUE,localArcPath=tempfolder,save=FALSE,MODISserverOrder = "LPDAAC", stubbornness = 3),file='NULL', type="message"),file='NULL')
   } 
   
   if (!dir.exists(dstfolder)) {
@@ -93,6 +92,8 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
   myshp <- readOGR(shapefilepath, verbose=FALSE)
   e <- extent(myshp)
   tile <- getTile(e)
+  
+  daterange <- as.Date(daterange)
   
   # Try MODIS Aqua first
   x='MYD13Q1'
