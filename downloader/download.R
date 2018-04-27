@@ -432,7 +432,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     }
     # Delete temporary files and unwanted geotiffs after one DownloadChunk and deregister the corresponding files in the database
     if (length(removefinally)>0) {
-      query <- dbSendStatement(db,sprintf("DELETE FROM geotiffs WHERE filepath in ('%s')",paste(file.path(ID,basename(removefinally)),collapse="','")))
+      query <- dbSendStatement(db,sprintf("DELETE FROM geotiffs WHERE filepath in ('%s')",paste(gsub(paste(storage_location,"/",sep=""),"",removefinally),collapse="','")))
       dbClearResult(query)
       unlink(removefinally) 
     }
