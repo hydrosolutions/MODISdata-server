@@ -155,7 +155,7 @@ DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, ti
   
   # get available online files. Start at webserver root and fetch all links from index.html.
   # Webserver structure is: root/YYYY.MM.DD/****.hdf
-  cat("Browsing the webserver file structure for new files in ",baselink,"\n")
+  cat("... Browsing the webserver file structure for new files in ",baselink,"\n")
   tilepattern <- paste(sprintf("%s", tiles),collapse="|")
   pattern <- paste(product,".*(",tilepattern,").*","\\.hdf$",sep="")
   links <- xpathSApply(htmlParse(out), "//a/@href")
@@ -192,7 +192,7 @@ DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, ti
       }
       dstfile <- file.path(savepath,newfiles$file[i])
       filelink <- as.character(newfiles$link[i])
-      cat("Downloading ",filelink,"\n")
+      cat("... Downloading ",filelink,"\n")
       response <- RETRY("GET",filelink, pause_cap = max_wait, times=3, authenticate("julesair2", "538-FuJnS"), write_disk(path = tempfile,overwrite = TRUE))
       if (response$status_code==200 && isvalidHDF_4_5(tempfile)) {
         file.copy(tempfile,dstfile)
@@ -292,7 +292,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
     HDFlist =  observationsbydate[[k]]
     HDFlistbydateandtile <- by(as.data.frame(HDFlist), as.data.frame(HDFlist)[,"tile"], function(x) x)
     if ((length(HDFlistbydateandtile) != length(tile@tile)) | any(unlist(lapply(HDFlistbydateandtile,FUN=function(x) {is.null(x)})))) {
-      cat('Some Tile are missing for date ',observationsbydate[[k]][1,'date'],'. Processing is skipped', '\n',sep='')
+      cat('! Some Tile are missing for date ',observationsbydate[[k]][1,'date'],'. Processing is skipped', '\n',sep='')
       next 
     } 
     GTifflist <- c()
@@ -302,14 +302,14 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
     for (i in 1:nrow(HDFlistbydateandtile)){
       for (j in 1:nrow(HDFlistbydateandtile[[i]])) {
         HDFfile <- HDFlistbydateandtile[[i]][j,]
-        cat('Processing ... ',as.character(HDFfile$file),'\n',sep='')
+        cat('... Processing  ',as.character(HDFfile$file),'\n',sep='')
         GTifflist[i]=tempfile(tmpdir=tempfolder,fileext = ".tif")
         GTifflist2[i]=tempfile(tmpdir=tempfolder,fileext = ".tif")
         
         validHDF <- isvalidHDF_4_5(HDFfile$file)
         if (!validHDF) {
           unlink(as.character(HDFfile$file))
-          cat('The downloaded file has not been recognized as a valid HDF4/5 file. Try again or manually download the following file and check its validity: ', as.character(HDFfile$files),'\n',sep='')
+          cat('! The downloaded file has not been recognized as a valid HDF4/5 file. Try again or manually download the following file and check its validity: ', as.character(HDFfile$files),'\n',sep='')
           filesvalid=FALSE
           next
         }
