@@ -12,6 +12,9 @@ library(XML)
 library(R.utils)
 library(httr)
 
+earthdatauser <- "hydrosolutions"
+earthdatapw <- "Hydromet2018"
+
 ########### 0.HELPER FUNCTIONS ##############
 
 # Simple delper function to set the compress argument in gdal
@@ -107,7 +110,7 @@ isvalidHDF_4_5 <- function(filename) {
   return(out)
 }
 
-DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, tiles, max_wait=300, checkIntegrity=FALSE) {
+DownloadFromNSIDC <- function(product, collection, datapath, daterange, tiles, max_wait=300, checkIntegrity=FALSE) {
   # Updates local MODIS MOD10A1/MYD10A1 files within the specified range
   #
   # Args:
@@ -132,7 +135,7 @@ DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, ti
   } 
   
   # Test Server path
-  out <- RETRY("GET",baselink, pause_cap = max_wait, times=3, authenticate("hydrosolutions", "Hydromet2018"))
+  out <- RETRY("GET",baselink, pause_cap = max_wait, times=3, authenticate(earthdatauser, earthdatapw))
   if (!out$status_code==200) {
     stop(paste("The server at ",baselink, " can not be rached: Does the specified product.collection combination exist on that server?"))
   }
@@ -168,7 +171,7 @@ DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, ti
     date <- as.Date(link,format="%Y.%m.%d/")
     if (!is.na(date) && date >= begin && date <= end) {
       nextlink <- paste(baselink,as.character(date,format="%Y.%m.%d"),sep="/")
-      out <- RETRY("GET", nextlink, pause_cap = max_wait, times=3, authenticate("hydrosolutions", "Hydromet2018"))
+      out <- RETRY("GET", nextlink, pause_cap = max_wait, times=3, authenticate(earthdatauser, earthdatapw))
       if (out$status_code==200) {
         links2 <- xpathSApply(htmlParse(out), "//a/@href")
         links2 <- unname(links2[!duplicated(links2)])
@@ -193,11 +196,13 @@ DownloadFromNSIDC <- function(product, collection="006", datapath, daterange, ti
       dstfile <- file.path(savepath,newfiles$file[i])
       filelink <- as.character(newfiles$link[i])
       cat("... Downloading ",filelink,"\n")
-      response <- RETRY("GET",filelink, pause_cap = max_wait, times=3, authenticate("julesair2", "538-FuJnS"), write_disk(path = tempfile,overwrite = TRUE))
+      response <- RETRY("GET",filelink, pause_cap = max_wait, times=3, authenticate(earthdatauser, earthdatapw), write_disk(path = tempfile,overwrite = TRUE))
       if (response$status_code==200 && isvalidHDF_4_5(tempfile)) {
         file.copy(tempfile,dstfile)
-      } 
-      file.remove(tempfile)
+      }  else {
+        try(file.remove(tempfile))
+        stop(paste("! ",filelink," could not be downlaoded", sep=""))
+      }
     }
   }
   
@@ -266,11 +271,11 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
   # Try MODIS Aqua first
   collection="006"
   x='MYD10A1'
-  out1=tryCatch(DownloadFromNSIDC(product=x,datapath=localArcPath,daterange=daterange,tiles=tile@tile), error = function(e) {NULL})
+  out1=tryCatch(DownloadFromNSIDC(product=x,collection=collection,datapath=localArcPath,daterange=daterange,tiles=tile@tile), error = function(e) {stop("! There was an error while downloading. Retry later and check the internet connection.")})
   
   # Then MODIS Terra
   x='MOD10A1'
-  out2=tryCatch(DownloadFromNSIDC(product=x,collection=collection,datapath=localArcPath,daterange=daterange,tiles=tile@tile), error = function(e) {NULL})
+  out2=tryCatch(DownloadFromNSIDC(product=x,collection=collection,datapath=localArcPath,daterange=daterange,tiles=tile@tile), error = function(e) {stop("! There was an error while downloading. Retry later and check the internet connection.")})
   
   # Merge lists of downloaded HDF Tiles
   files <- c(out1,out2)

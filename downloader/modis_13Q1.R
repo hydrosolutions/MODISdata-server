@@ -97,11 +97,11 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
   
   # Try MODIS Aqua first
   x='MYD13Q1'
-  out1=tryCatch(getHdf(product=x,begin=daterange[1],end=daterange[2],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
+  out1=tryCatch(getHdf(product=x,begin=daterange[1],end=daterange[2],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {stop("! There was an error while downloading. Retry later and check the internet connection.")})
   
   # Then MODIS Terra
   x='MOD13Q1'
-  out2=tryCatch(getHdf(product=x,begin=daterange[1],end=daterange[2],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
+  out2=tryCatch(getHdf(product=x,begin=daterange[1],end=daterange[2],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {stop("! There was an error while downloading. Retry later and check the internet connection.")})
   
   # Merge lists of downloaded HDF Tiles
   files <- c(unname(unlist(out1)),unname(unlist(out2)))

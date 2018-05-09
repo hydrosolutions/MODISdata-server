@@ -277,10 +277,15 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
           rasterimages <- CropFromGeotiff(daterange = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, geotiff_compression = geotiff_compression)
         } else {
           cat('! using data from WEBSERVER','\n',sep='')
-          rasterimages <- Raw2Geotiff(daterange = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, geotiff_compression=geotiff_compression) #Download&Process MODIS Data
+          rasterimages <- tryCatch({
+            #Download&Process MODIS Data or return NULL when an error occured
+            Raw2Geotiff(daterange = daterange, shapefilepath=shapefilepath, dstfolder=datapath, srcstorage=srcstorage, geotiff_compression=geotiff_compression)},
+            error = function(e) {NULL})
         }
         
-        if (nrow(rasterimages)==0) {
+        if (is.null(rasterimages)) {
+          cat('! There was an error downloading files for ',name,'\n',sep='')
+        } else if (nrow(rasterimages)==0) {
           cat('! No new data were found for ',name,'\n',sep='')
         } else {
           cat('... Starting post-processing of new data for ',name,'\n',sep='')
