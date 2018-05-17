@@ -284,16 +284,22 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
         }
         
         if (is.null(rasterimages)) {
-          cat('! There was an error downloading files for ',name,'\n',sep='')
+          cat('! There was an error downloading and processing files for ',name,'\n',sep='')
+          if (STOP_ON_DOWNLOAD_ERROR) {
+            stop("! UpdateData has been stopped due to an error while downloading and processing of the data. \n Set STOP_ON_DOWNLOAD_ERROR=FALSE if you do not want this behaviour (However, this can cause data gaps).")
+          }
         } else if (nrow(rasterimages)==0) {
           cat('! No new data were found for ',name,'\n',sep='')
         } else {
           cat('... Starting post-processing of new data for ',name,'\n',sep='')
+            newdata = rasterimages[order(rasterimages$date, decreasing=FALSE),]
             # Get a list of all available rasterimages/geotiffs. Extract date vector from filenames and create dataframe with filename-date pairs.
             gtifffiles <- list.files(datapath, pattern = "\\-daily.tif$", full.names = TRUE)
             dates=as.Date(sub("-daily.tif","",basename(gtifffiles)))
             datainstorage = data.frame(file=gtifffiles, date=dates)
-            newdata = rasterimages[order(rasterimages$date, decreasing=FALSE),]
+            otherfiles <- datainstorage[datainstorage$date > max(newdata$date),] # remove newer, interfering files, e.g. after database reset 
+            removefinally <- c(removefinally,as.character(otherfiles$file))
+            datainstorage <- datainstorage[datainstorage$date <= max(newdata$date),]
             olddata<-datainstorage[!(datainstorage$file %in% newdata$file),]
             if (nrow(olddata)>0) {
               olddata = olddata[order(olddata$date, decreasing=TRUE),]
