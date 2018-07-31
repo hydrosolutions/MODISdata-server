@@ -27,6 +27,8 @@ configfile = "/home/jules/Desktop/Hydromet/MODISsnow_server/MODISsnow-server/dow
 download_stdout = None
 
 def load_config(configfile,flaskapp):
+    """Load config file and check required values"""
+
     required = ["MODIS_DATASTORAGE", "DATASTORAGE_LOC", "DATABASE_LOC","DOWNLOAD_TRIGGER","APP_USER","APP_PW"]
     input = dict()
     configvariables = dict()
@@ -51,6 +53,8 @@ load_config(configfile, app)
 
 # Database routines
 def get_db():
+    """Connects to database if not yet connected and returns connection"""
+
     db = getattr(g, '_database', None)
     if db is None:
         db = sqlite3.connect(app.config['DATABASE_LOC'])
@@ -58,15 +62,19 @@ def get_db():
 
 @app.teardown_appcontext
 def close_connection(exception):
+    """Disconnect database"""
+
     db = getattr(g, '_database', None)
     if db is not None:
         db.close()
 
 def make_dicts(cursor, row):
+    """convert database entry to dict"""
     return dict((cursor.description[idx][0], value)
                 for idx, value in enumerate(row))
 
 def query_db(query, args=(), one=False):
+    """query database and return dict"""
     cur = get_db().execute(query, args)
     rv = cur.fetchall()
     out = list()
@@ -83,7 +91,7 @@ def check_auth(username, password):
     return username == app.config['APP_USER'] and password == app.config['APP_PW']
 
 def authenticate():
-    """Sends a 401 response that enables basic auth"""
+    """Login error"""
     raise Error('Could not verify your access level for that URL. You have to login with proper credentials', status_code=401)
 
 def requires_auth(f):
@@ -96,6 +104,7 @@ def requires_auth(f):
     return decorated
 
 def shp2json(shapefilename):
+    """convert shapefile in path shapefilename to geojson"""
     geodataframe = geopandas.read_file(shapefilename)
     geodataframe_4326 = geodataframe.to_crs({'init': 'epsg:4326'})
     tempfile = NamedTemporaryFile();tempfile.close()
@@ -105,6 +114,7 @@ def shp2json(shapefilename):
     return(gj)
 
 def is_deleted(id):
+    """check if catchment with ID=id has deletion flag"""
     res = query_db('select deletion from settings where ID = ?', [id])
     if len(res)==0:
         return True
@@ -124,21 +134,6 @@ class Error(Exception):
         rv = dict(self.payload or ())
         rv['message'] = self.message
         return rv
-
-def data_processor_status():
-    status = 'idle'
-    content = None
-    uptime = None
-    for file in os.listdir(app.config['DATASTORAGE_LOC']):
-        if file.endswith(".LOCKED"):
-            status = 'running'
-            fullpath = os.path.join(app.config['DATASTORAGE_LOC'],file)
-            reader = open(fullpath, 'r')
-            content = reader.read()
-            starttime = dt.strptime(file.replace(".LOCKED",""), "%Y-%m-%d %H:%M:%S")
-            uptime = dt.today()-starttime
-            break
-    return {'status': status, 'output': content, 'uptime': str(uptime)}
 
 @app.errorhandler(Error)
 def handle_error(error):
@@ -172,12 +167,29 @@ def handle_error(error):
 
 @app.route('/', methods=['GET'])
 def status():
-    # TODO: Add filesystem usage to status info?
+    """root index returns OK"""
     return jsonify({"status" : "OK"})
+
+def data_processor_status():
+    """return status of data processor"""
+    status = 'idle'
+    content = None
+    uptime = None
+    for file in os.listdir(app.config['DATASTORAGE_LOC']):
+        if file.endswith(".LOCKED"):
+            status = 'running'
+            fullpath = os.path.join(app.config['DATASTORAGE_LOC'],file)
+            reader = open(fullpath, 'r')
+            content = reader.read()
+            starttime = dt.strptime(file.replace(".LOCKED",""), "%Y-%m-%d %H:%M:%S")
+            uptime = dt.today()-starttime
+            break
+    return {'status': status, 'output': content, 'uptime': str(uptime)}
 
 @app.route('/data_processor', methods=['PUT'])
 @requires_auth
 def data_processor_trigger():
+    """triggers data processor if status is idle, else raise 409"""
     response = data_processor_status()
     if response['status']=='idle':
         trigger = app.config['DOWNLOAD_TRIGGER']
@@ -200,11 +212,13 @@ def data_processor_trigger():
 
 @app.route('/data_processor', methods=['GET'])
 def response_data_processor_status():
+    """return data processor status"""
     response = data_processor_status()
     return jsonify(response)
 
 @app.route('/catchments', methods=['GET'])
 def list_catchments():
+    """return json of catchments and their attributes"""
     entries = query_db('select ID,name,last_obs_ts,last_obs_gtif from settings where deletion = 0')
     for i, entry in enumerate(entries):
         entries[i].pop('geojson', None)
@@ -217,6 +231,8 @@ def list_catchments():
 @app.route('/catchments', methods=['POST'])
 @requires_auth
 def add_catchment():
+    """add catchment to database"""
+
     if not request.json:
         raise Error('request must be of type json', status_code=400)
 
@@ -304,6 +320,8 @@ def add_catchment():
 
 @app.route('/catchments/<id>', methods=['GET'])
 def show_catchment(id):
+    """return json of catchment with ID=id and detailed attributes"""
+
     entry = query_db('select * from settings where ID = ? and deletion = 0',[id])
     if len(entry) == 0:
         raise Error('there is no catchment with the requested id', status_code=404)
@@ -317,6 +335,8 @@ def show_catchment(id):
 
 @app.route('/catchments/<id>', methods=['DELETE'])
 def tag_catchment4deletion(id):
+    """tag catchment with ID=id for deletion"""
+
     if is_deleted(id):
         raise Error('there is no catchment with the requested id', status_code=404)
     elif int(id) is not 1:
@@ -330,6 +350,8 @@ def tag_catchment4deletion(id):
 
 @app.route('/catchments/<id>/timeseries', methods=['GET'])
 def list_timeseries(id):
+    """ return json of available timeseries for this catchment"""
+
     if not is_deleted(id):
         entries = query_db('select ID,catchmentid,min_elev,max_elev,elev_zone from timeseries where catchmentid = ?', [id])
         for i, entry in enumerate(entries):
@@ -340,6 +362,8 @@ def list_timeseries(id):
 
 @app.route('/catchments/<catchmentid>/timeseries/<id>', methods=['GET'])
 def show_timeseries(id,catchmentid):
+    """ return timeseries with ID=id for catchment with ID=catchmentid """
+
     if is_deleted(catchmentid):
         raise Error('there is no catchment with the requested id', status_code=404)
     path = query_db('select filepath from timeseries where ID = ? and catchmentid = ?', [id, catchmentid])
@@ -381,6 +405,7 @@ def show_timeseries(id,catchmentid):
 
 @app.route('/catchments/<id>/geotiffs', methods=['GET'])
 def list_geotiff(id):
+    """ return geojson of available geotiffs for catchment with ID=id """
     if not is_deleted(id):
         entries = query_db('select ID,catchmentid,date from geotiffs where catchmentid = ?', [id])
 
@@ -416,6 +441,8 @@ def list_geotiff(id):
 
 @app.route('/catchments/<catchmentid>/geotiffs/<id>', methods=['GET'])
 def show_geotiff(id, catchmentid):
+    """ return geotiff as download with id=ID of catchment with ID=catchmentid """
+
     if is_deleted(catchmentid):
         raise Error('there is no catchment with the requested id', status_code=404)
     path = query_db('select date,filepath from geotiffs where ID = ? and catchmentid = ?', [id, catchmentid])
@@ -436,6 +463,8 @@ def show_geotiff(id, catchmentid):
 
 @app.route('/catchments/<id>/geojson', methods=['GET'])
 def show_geojson(id):
+    """ return geojson of catchment with ID=id """
+
     entry = query_db('select * from settings where ID = ? and deletion = 0', [id])
     if len(entry) == 0:
         raise Error('there is no catchment with the requested id', status_code=404)
@@ -445,7 +474,6 @@ def show_geojson(id):
 
 
 # Shapefile Converter
-
 
 UPLOAD_FOLDER = None
 ALLOWED_EXTENSIONS = set(['shp','shx','dbf','prj'])
@@ -458,6 +486,8 @@ def allowed_file(filename):
 
 @app.route('/shapefile2json', methods=['GET','POST'])
 def shapefile2json():
+    """ converts a shapefile to geojson. Provides basic html page """
+
     shp_dict = dict()
     if request.method == 'POST':
         # check if the post request has the file part
