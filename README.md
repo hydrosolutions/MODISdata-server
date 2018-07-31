@@ -13,7 +13,7 @@ The complete server consists of four parts: downloader, server, database and con
 #### Data Processor
  It compares the local data record with the record of MODIS data that are available online. If the local data record needs to be updated, it downloads the required raw MODIS tiles for the selected region. The new tiles are processed (converted, cropped, mosaiced, combined (Terra&Aqua)) to produce one daily geotiff image of the selected region. Additional steps include a simple cloud correction algorithm (use prior observation principle) and the computation of timeseries for the whole region or seperate for each elevation zone. Finally, the new data is registered in the database and temporary files are deleted. 
  The code is written in R and makes use of various libraries for spatial data like rgdal, MODIS, elevatr etc.
-More information: [Data Processor](doc/downloader/Readme.md)
+More information: [Data Processor](doc/downloader/README.md)
  
 #### Server
 The server provides the API for data access to the data end user. It reads the record of data that are registered in the database and organises them. Apart from providing access to the data, the server offers an API to create or delete regions. The minimum requirement for the creation of a new region is a single polygon shape in geojson format and an arbitrary name. The server can also trigger the execution of the downloader
