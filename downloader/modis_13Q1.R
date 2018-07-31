@@ -97,11 +97,11 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
   
   # Try MODIS Aqua first
   x='MYD13Q1'
-  out1=tryCatch(getHdf(product=x,begin=daterange[1],end=daterange[2],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
+  out1=tryCatch(getHdf(product=x,begin=daterange[1],end=daterange[2],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {stop("! There was an error while downloading. Retry later and check the internet connection.")})
   
   # Then MODIS Terra
   x='MOD13Q1'
-  out2=tryCatch(getHdf(product=x,begin=daterange[1],end=daterange[2],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {list()})
+  out2=tryCatch(getHdf(product=x,begin=daterange[1],end=daterange[2],tileH=tile@tileH,tileV=tile@tileV, wait=0.5, checkIntegrity=TRUE), error = function(e) {stop("! There was an error while downloading. Retry later and check the internet connection.")})
   
   # Merge lists of downloaded HDF Tiles
   files <- c(unname(unlist(out1)),unname(unlist(out2)))
@@ -127,7 +127,7 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
     HDFlist =  observationsbydate[[k]]
     HDFlistbydateandtile <- by(as.data.frame(HDFlist), as.data.frame(HDFlist)[,"tile"], function(x) x)
     if ((length(HDFlistbydateandtile) != length(tile@tile)) | any(unlist(lapply(HDFlistbydateandtile,FUN=function(x) {is.null(x)})))) {
-      cat('Some Tile are missing for date ',observationsbydate[[k]][1,'date'],'. Processing is skipped', '\n',sep='')
+      cat('! Some Tile are missing for date ',observationsbydate[[k]][1,'date'],'. Processing is skipped', '\n',sep='')
       next 
     } 
     GTifflist <- c()
@@ -137,14 +137,14 @@ Raw2Geotiff <- function(daterange, shapefilepath, dstfolder, srcstorage=NULL, ge
     for (i in 1:nrow(HDFlistbydateandtile)){
       for (j in 1:nrow(HDFlistbydateandtile[[i]])) {
         HDFfile <- HDFlistbydateandtile[[i]][j,]
-        cat('Processing ... ',as.character(HDFfile$file),'\n',sep='')
+        cat('... Processing ',as.character(HDFfile$file),'\n',sep='')
         GTifflist[i]=tempfile(tmpdir=tempfolder,fileext = ".tif")
         GTifflist2[i]=tempfile(tmpdir=tempfolder, fileext = ".tif")
         
         validHDF <- isvalidHDF_4_5(HDFfile$file)
         if (!validHDF) {
           unlink(as.character(HDFfile$file))
-          cat('The downloaded file has not been recognized as a valid HDF4/5 file. Try again or manually download the following file and check its validity: ', as.character(HDFfile$files),'\n',sep='')
+          cat('! The downloaded file has not been recognized as a valid HDF4/5 file. Try again or manually download the following file and check its validity: ', as.character(HDFfile$files),'\n',sep='')
           filesvalid=FALSE
           setwd(oldwd)
           break
