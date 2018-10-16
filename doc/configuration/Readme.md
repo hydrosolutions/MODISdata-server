@@ -31,6 +31,9 @@ This sets the earliest day resp. latest day for which the data record should be 
 #### APP_USER, APP_PW
 A username and password that shall be used to protect part of the server API.
 
+#### STOP_ON_DOWNLOAD_ERROR
+TRUE/FALSE: If true, processing will stop when an error during download is encountered. This is a recommended setting during initiliastion of the database to avoid gaps in the data record when the MODIS data server is temporarily offline. The data processor must then be manually restarted. Set this value to FALSE in operational mode to avoid blocking the data processor in case of corrupt files on the MODIS data server.
+
 #### EXAMPLE config.R
 
 ```R
@@ -46,6 +49,6 @@ MASTERREGION_EARLIEST_DATE = "2000-01-01"
 MASTERREGION_LATEST_DATE = NULL
 APP_USER = "admin"
 APP_PW = "i9df3478"
-
+STOP_ON_DOWNLOAD_ERROR = TRUE
 
 ```

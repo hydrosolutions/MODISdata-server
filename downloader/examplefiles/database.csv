@@ -1,3 +1,0 @@
-ID,name,shapefile,is_subregion_of,store_geotiff,store_length,cloud_correct,timeseries,elev_split,earliestdate,latestdate
-VK,Vaksh,/home/jules/Desktop/Hydromet/MODISsnow_server/MODISsnow-server/downloader/examplefiles/shapefiles/border_vahsh.shp,NA,TRUE,NA,TRUE,TRUE,NA,2018-01-01,2018-01-15
-VKDEM,Vaksh_DEM,/home/jules/Desktop/Hydromet/MODISsnow_server/MODISsnow-server/downloader/examplefiles/shapefiles/border_vahsh.shp,VK,TRUE,NA,TRUE,TRUE,333,2018-01-01,2018-01-15
