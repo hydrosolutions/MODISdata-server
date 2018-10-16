@@ -22,7 +22,7 @@ app = Flask(__name__)
 
 # Configuration routines
 app.config.from_object(__name__)
-configfile = "/home/jules/Desktop/Hydromet/MODISsnow_server/MODISsnow-server/downloader/examplefiles/config.R"
+configfile = "/srv/modis-snow-server/config.R"
 
 download_stdout = None
 
@@ -259,9 +259,9 @@ def add_catchment():
     if "store_length" in input.keys():
         try:
             store_length = int(input['store_length'])
-            if store_length < 1: raise(Exception)
+            if store_length < 200: raise(Exception)
         except:
-            raise Error('store_length must be an integer > 0',  status_code=400)
+            raise Error('store_length must be an integer > 199',  status_code=400)
 
     else:
         store_length = 365
@@ -491,8 +491,8 @@ def shapefile2json():
             <title>shapefile 2 geojson converter</title>
             <h2>convert shapefile to geojson:</h2>
             <form method=post enctype=multipart/form-data>
-              <p>shp: <input type=file name=files><br>shx: <input type=file name=files><br>dbf: <input type=file name=files>prj: <input type=file name=files>
-                 <input type=submit value=Upload><br><br># with curl: curl -i -X POST -F files=@&lt;path.shp&gt; -F files=@&lt;path.shx&gt; -F files=@&lt;path.dbf&gt; &lt;this:url&gt;
+              <p>shp: <input type=file name=files><br>shx: <input type=file name=files><br>dbf: <input type=file name=files><br>prj : <input type=file name=files>
+                 <input type=submit value=Upload><br><br># with curl: curl -i -X POST -F files=@&lt;path.shp&gt; -F files=@&lt;path.shx&gt; -F files=@&lt;path.dbf&gt -F files=@&lt;path.prj&gt; &lt;this:url&gt;
 
             </form>
             '''
