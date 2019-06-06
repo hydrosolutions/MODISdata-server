@@ -274,7 +274,10 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
           parentregion <- db_frozen[db_frozen$ID==subregion,]
           cat('! using data from PARENTREGION with ID ',as.character(parentregion$ID),'\n',sep='')
           srcdatapath <- file.path(storage_location,as.character(parentregion$ID))
-          rasterimages <- CropFromGeotiff(daterange = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, geotiff_compression = geotiff_compression)
+          rasterimages <- tryCatch({
+            CropFromGeotiff(daterange = daterange, shapefilepath = shapefilepath, srcfolder = srcdatapath, dstfolder = datapath, geotiff_compression = geotiff_compression)},
+            error = function(e) {NULL},
+            warning = function(w) {NULL})
         } else {
           cat('! using data from WEBSERVER','\n',sep='')
           rasterimages <- tryCatch({
@@ -322,9 +325,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
               # Get the list of the most recent timeseries files
               df_ts_files <- dbGetQuery(db,sprintf("SELECT filepath,min_elev,max_elev FROM timeseries WHERE catchmentid=%s",ID))
               
-              # if eleveation splitting is activated, preapre the DEM and elevation zone information
-              if (!is.na(db_frozen$elev_split[i])) {
-                cat('! Elevation Splitting is activated')
+              if (db_frozen$ID[i] > 1) {
                 dempath <- file.path(datapath,"dem.grd")
                 if (!file.exists(dempath)) {
                   cat(' -> Downloading DEM data for the first time')
@@ -333,6 +334,11 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
                 } else {
                   dem_resampled <- raster(dempath) 
                 }
+              }
+              
+              # if eleveation splitting is activated, preapre the DEM and elevation zone information
+              if (!is.na(db_frozen$elev_split[i])) {
+                cat('! Elevation Splitting is activated')
                 if (nrow(df_ts_files)==0) {
                   stepsize <- db_frozen$elev_split[i]
                   min <- floor(min(values(dem_resampled))/stepsize)*stepsize
