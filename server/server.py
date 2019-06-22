@@ -340,6 +340,7 @@ def show_catchment(id):
         entry.update({"timeseries": {'href' : url_for('list_timeseries', id=entry["ID"])}})
         entry.update({"geotiff": {'href' : url_for('list_geotiff', id=entry["ID"])}})
         entry.update({"geojson": {'href' : url_for('show_geojson', id=entry["ID"])}})
+        entry["updating"] = entry.pop("locked")
         return jsonify(entry)
 
 @app.route('/catchments/<id>', methods=['DELETE'])
