@@ -172,9 +172,7 @@ def status():
 
 def data_processor_status():
     """return status of data processor"""
-    status = 'idle'
-    content = None
-    uptime = None
+    content = ""
     last_starttime = dt.strptime("1970-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")
     last_file = None
     for file in os.listdir(app.config['LOGFILE_LOC']):
@@ -185,14 +183,10 @@ def data_processor_status():
                 last_file = file
                 
     if last_file:
-        status = 'running'
         fullpath = os.path.join(app.config['LOGFILE_LOC'],last_file)
         reader = open(fullpath, 'r')
-        content = reader.read()[-5000:]
-        starttime = dt.strptime(last_file.replace(".log",""), "%Y-%m-%d %H:%M:%S")
-        uptime = dt.today()-starttime
-            
-    return {'status': status, 'output': content, 'uptime': str(uptime)}
+        content = reader.read()[-10000:].replace("\n","<br>").split("<br>",1)[-1]
+    return content
 
 @app.route('/data_processor', methods=['PUT'])
 @requires_auth
@@ -222,7 +216,14 @@ def data_processor_trigger():
 def response_data_processor_status():
     """return data processor status"""
     response = data_processor_status()
-    return jsonify(response)
+    return  '''
+            <!doctype html>
+            <title>logs</title>
+            <h2>Logfile output of the most recently started process</h2>
+            <p>
+            %s
+            </p>
+            ''' % (response)
 
 @app.route('/catchments', methods=['GET'])
 def list_catchments():
