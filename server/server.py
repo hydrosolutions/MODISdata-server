@@ -170,23 +170,27 @@ def status():
     """root index returns OK"""
     return jsonify({"status" : "OK"})
 
-def data_processor_status():
+def data_processor_status(n=0):
     """return status of data processor"""
+    if n < 1:
+      n = 1
+    file_date_dict = dict()
     content = ""
-    last_starttime = dt.strptime("1970-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")
-    last_file = None
+    starttime = ""
     for file in os.listdir(app.config['LOGFILE_LOC']):
         if file.endswith(".log"):
             starttime = dt.strptime(file.replace(".log",""), "%Y-%m-%d %H:%M:%S")
-            if starttime > last_starttime:
-                last_starttime = starttime
-                last_file = file
+            file_date_dict.update({starttime : file})
+    
                 
-    if last_file:
-        fullpath = os.path.join(app.config['LOGFILE_LOC'],last_file)
+    if len(file_date_dict) >= n:
+        date_selected = sorted(file_date_dict.keys(), reverse=True)[n-1]
+        file = file_date_dict[date_selected]
+        fullpath = os.path.join(app.config['LOGFILE_LOC'],file)
         reader = open(fullpath, 'r')
         content = reader.read()[-10000:].replace("\n","<br>").split("<br>",1)[-1]
-    return content
+        starttime = file.replace(".log","")
+    return {"content" : content, "starttime": starttime}
 
 @app.route('/data_processor', methods=['PUT'])
 @requires_auth
@@ -212,18 +216,19 @@ def data_processor_trigger():
     else:
         raise Error('data processor is already running. Try again later', status_code=409)
 
+@app.route('/data_processor/<n>', methods=['GET'])
 @app.route('/data_processor', methods=['GET'])
-def response_data_processor_status():
+def response_data_processor_status(n=1):
     """return data processor status"""
-    response = data_processor_status()
+    response = data_processor_status(int(n))
     return  '''
             <!doctype html>
             <title>logs</title>
-            <h2>Logfile output of the most recently started process</h2>
+            <h2>Log Output of the process that started @ %s</h2>
             <p>
             %s
             </p>
-            ''' % (response)
+            ''' % (response["starttime"],response["content"])
 
 @app.route('/catchments', methods=['GET'])
 def list_catchments():
@@ -295,9 +300,9 @@ def add_catchment():
     if "elev_split" in input.keys():
         try:
             elev_split = int(input['elev_split'])
-            if elev_split < 1: raise(Exception)
+            if elev_split < 100: raise(Exception)
         except:
-            raise Error('elev_split must be an integer > 0',  status_code=400)
+            raise Error('elev_split must be an integer > 99',  status_code=400)
     else:
         elev_split = None
 
