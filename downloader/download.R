@@ -169,13 +169,15 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   # Connect to the database
   db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
   on.exit({
-    if (exists('db')) {dbDisconnect(db)}
-    if (exists('toBeUpdated')) {
-      for (ID in toBeUpdated$ID) {
-        query <- dbSendStatement(db, sprintf("UPDATE settings SET locked=0 WHERE ID=%s",ID))
-        dbClearResult(query)
+    cat("\nProcessing DONE .... \n")
+    if (exists('db')) {
+      if (exists('toBeUpdated')) {
+        for (ID in toBeUpdated$ID) {
+          query <- dbSendStatement(db, sprintf("UPDATE settings SET locked=0 WHERE ID=%s",ID))
+          dbClearResult(query)
+        }
       }
-    }
+      dbDisconnect(db)}
     }, add=TRUE)
   
   # Search for entries in table settings that are tagged for deletion.
@@ -198,13 +200,13 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     toBeUpdated = dbGetQuery(db, sprintf("SELECT ID FROM settings WHERE locked=0 AND last_obs_gtif>\"%s\"",as.character(minDate2Update,"%Y-%m-%d")))
     query <- dbSendStatement(db, sprintf("UPDATE settings SET locked=1 WHERE locked=0 AND last_obs_gtif>\"%s\"",as.character(minDate2Update,"%Y-%m-%d")))
     dbClearResult(query)
-    cat("\n! The data update is limited to catchments that are newer than ",minDate2Update, sep="")
+    cat("\n! The data update is limited to catchments that are newer than ",as.character(minDate2Update), sep="")
   } else if (!is.na(update_days_limit) && update_days_limit < 0) {
     maxDate2Update = Sys.time()+update_days_limit*24*3600
     toBeUpdated = dbGetQuery(db, sprintf("SELECT ID FROM settings WHERE locked=0 AND (last_obs_gtif IS NULL OR last_obs_gtif<=\"%s\")",as.character(maxDate2Update,"%Y-%m-%d")))
     query <- dbSendStatement(db, sprintf("UPDATE settings SET locked=1 WHERE locked=0 AND (last_obs_gtif IS NULL OR last_obs_gtif<=\"%s\")",as.character(maxDate2Update,"%Y-%m-%d")))
     dbClearResult(query)
-    cat("\n! The data update is limited to catchments that are older than ",maxDate2Update, sep="")
+    cat("\n! The data update is limited to catchments that are older than ",as.character(maxDate2Update), sep="")
   } else {
     toBeUpdated = dbGetQuery(db, "SELECT ID FROM settings WHERE locked=0")
     query <- dbSendStatement(db, "UPDATE settings SET locked=1 WHERE locked=0")
@@ -596,5 +598,4 @@ dbDisconnect(db)
 #database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE)
 UpdateData(db = DATABASE_LOC, storage_location=DATASTORAGE_LOC, srcstorage = MODIS_DATASTORAGE, geotiff_processor=GEOTIFF_PROCESSOR, max_download_chunk = maxDOWNLOADchunk, update_days_limit = limit_past_days)
   
-cat("\n")
 sink()
