@@ -11,44 +11,42 @@ try({
   }, silent = TRUE)
 
 # Check validity of args
+limit_past_days = NA
 if (cmd) {
   args = commandArgs(trailingOnly=TRUE)
   if (length(args)<1) {
     stop("Argument for configuration file is missing, try: Rscript download.R path/config.R")
-  } else if (length(args)>1) {
+  } else if (length(args) == 2) {
+    limit_past_days = as.numeric(args[2])
+  } else if (length(args)>2) {
     stop("Too many arguments, try: Rscript download.R path/config.R")
+  }
+    
+  if (!file.exists(args[1])) {
+    stop(paste("The file ",args[1]," does not exist."))
   } else {
-    if (!file.exists(args)) {
-      stop(paste("The file ",args," does not exist."))
-    } else {
-      tryCatch({
-        source(args)
-      }, error = function(e) {
-        stop(paste(e,"\nThe file ",args," can not be sourced in R"))
-      })
-    }
+    tryCatch({
+      source(args[1])
+    }, error = function(e) {
+      stop(paste(e,"\nThe file ",args[1]," can not be sourced in R"))
+    })
   }
 }  
 
-
-
-# Check if the DATASTORAGE_LOC is currently used by another instance of this script. 
-# Check if there is a lockfile and if yes, stop execution. Else create a lockfile with the current date&time as filename
-# Remark: If lockfile is found but last modification is older than 1h, overwrite it. Most probably the last execution fo download.R was interrupted.
-oldlockfile <- list.files(DATASTORAGE_LOC,pattern="*.LOCKED", full.names = TRUE)
-if (length(oldlockfile)>0) {
-  oldlockfile <- oldlockfile[1]
-  locked_datetime <- file.info(oldlockfile)$mtime
-  if (difftime(Sys.time(),locked_datetime,units="secs") < 3600) {
-    stop("Processing has been terminated. Another process is locking the storage_location.")
-  } else {
-    file.remove(oldlockfile)
+# Cleanup log files that are older than 14 days
+oldlogfiles <- list.files(LOGFILE_LOC,pattern="*.log", full.names = TRUE)
+for (file in oldlogfiles) {
+  log_datetime <- file.info(file)$mtime
+  if (difftime(Sys.time(),log_datetime,units="days") > 14) {
+    file.remove(file)
   }
 }
-newlockfile <- file.path(DATASTORAGE_LOC,paste(format(Sys.time(), "%Y-%m-%d %H:%M:%S"),".LOCKED",sep=""))
-if (!file.create(newlockfile)) {stop("Processing has been terminated. Check write access on storage location.")}
+
+# Create new log file for current process
+newlogfile <- file.path(LOGFILE_LOC,paste(format(Sys.time(), "%Y-%m-%d %H:%M:%S"),".log",sep=""))
+if (!file.create(newlogfile)) {stop("Processing has been terminated. Check write access on logfile location.")}
 # Divert console output and messages to lockfile
-sink(file=newlockfile,split=TRUE,append = TRUE, type=c('output','message'))
+sink(file=newlogfile,split=TRUE,append = TRUE, type=c('output','message'))
 
 source(GEOTIFF_PROCESSOR)
 library(elevatr)
@@ -57,7 +55,7 @@ library(geojsonio)
 
 ########### 1.FUNCTION DEFINITIONS ##############
 # The main function which organises and triggers the downloading and processing for all entries in the database
-UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor, max_download_chunk=3, geotiff_compression = TRUE) {
+UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor, max_download_chunk=3, geotiff_compression = TRUE, update_days_limit = NA) {
   # Updates and Processes the MODIS Data for all entries listed in database.
   #
   # Args:
@@ -67,6 +65,9 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   #   max_download_chunk: The number of days for one updating&processing step. During this time, all temporary files (hdf & geotiff) are kept in order to avoid multiple download of the same file.
   #                       Default is 3 days. If harddisk storage is critical, the value should be lower. If a path is given for argument srcstorage, max_download_chunk is not critical, because the files will anyway be stored.
   #   geotiff_compression: Default: TRUE if output geotiff should be compressed (lossless,deflate level=9). FALSE for no compression.
+  #   update_days_limit: Default NA (no limit). 
+  #           A positive integer n: execution date - n days gives the minimum date a catchment must be already updated to in order to be updated further
+  #           A negative integer n: execution date - n days gives the maximum date a catchment can be already updated to in order to be updated further 
   #
   # Returns:
   #   Nothing, but status messages on the console
@@ -167,12 +168,20 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
   
   # Connect to the database
   db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
-  on.exit({if (exists('db')) {dbDisconnect(db)}}, add=TRUE)
+  on.exit({
+    if (exists('db')) {dbDisconnect(db)}
+    if (exists('toBeUpdated')) {
+      for (ID in toBeUpdated$ID) {
+        query <- dbSendStatement(db, sprintf("UPDATE settings SET locked=0 WHERE ID=%s",ID))
+        dbClearResult(query)
+      }
+    }
+    }, add=TRUE)
   
   # Search for entries in table settings that are tagged for deletion.
   # Delete all information for those entries in the database as well as all related files.
-  df_delete <- dbGetQuery(db, "SELECT * FROM settings WHERE deletion=1")
-  query <- dbSendStatement(db, "DELETE FROM settings WHERE deletion=1")
+  df_delete <- dbGetQuery(db, "SELECT * FROM settings WHERE deletion=1 AND locked=0")
+  query <- dbSendStatement(db, "DELETE FROM settings WHERE deletion=1 AND locked=0")
   dbClearResult(query)
   for (i in seq(length=nrow(df_delete))) {
     ID <- as.character(df_delete$ID[i])
@@ -184,14 +193,34 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     unlink(datapath, recursive = TRUE)
   }
    
-
+  if (!is.na(update_days_limit) && update_days_limit > 0) {
+    minDate2Update = Sys.time()-update_days_limit*24*3600
+    toBeUpdated = dbGetQuery(db, sprintf("SELECT ID FROM settings WHERE locked=0 AND last_obs_gtif>\"%s\"",as.character(minDate2Update,"%Y-%m-%d")))
+    query <- dbSendStatement(db, sprintf("UPDATE settings SET locked=1 WHERE locked=0 AND last_obs_gtif>\"%s\"",as.character(minDate2Update,"%Y-%m-%d")))
+    dbClearResult(query)
+    cat("\n! The data update is limited to catchments that are newer than ",minDate2Update, sep="")
+  } else if (!is.na(update_days_limit) && update_days_limit < 0) {
+    maxDate2Update = Sys.time()+update_days_limit*24*3600
+    toBeUpdated = dbGetQuery(db, sprintf("SELECT ID FROM settings WHERE locked=0 AND (last_obs_gtif IS NULL OR last_obs_gtif<=\"%s\")",as.character(maxDate2Update,"%Y-%m-%d")))
+    query <- dbSendStatement(db, sprintf("UPDATE settings SET locked=1 WHERE locked=0 AND (last_obs_gtif IS NULL OR last_obs_gtif<=\"%s\")",as.character(maxDate2Update,"%Y-%m-%d")))
+    dbClearResult(query)
+    cat("\n! The data update is limited to catchments that are older than ",maxDate2Update, sep="")
+  } else {
+    toBeUpdated = dbGetQuery(db, "SELECT ID FROM settings WHERE locked=0")
+    query <- dbSendStatement(db, "UPDATE settings SET locked=1 WHERE locked=0")
+    dbClearResult(query)
+  }
+  
   # freeze database at this moment of time. 
   db_frozen = dbReadTable(db,"settings")
   row.names(db_frozen)<-db_frozen$ID
   
+  index2Update = match(toBeUpdated$ID,db_frozen$ID)
+  index2Update = index2Update[!is.na(index2Update)]
+
   # Find the daterange of each entry in table settings for which new data might exists, either for geotiffs or timeseries or both.
   df_dates <- data.frame()
-  for (i in seq(length=nrow(db_frozen))) {
+  for (i in index2Update) {
     ID <- db_frozen$ID[i]
     # Limit latestdate,earliestdate with the settings of the masterregion
     max_obs <- min(as.Date(db_frozen$latestdate[i]),as.Date(db_frozen$latestdate[1]),na.rm=TRUE)
@@ -219,27 +248,32 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
     df <- data.frame(ID = db_frozen$ID[i], startdate=startdate, enddate = enddate)
     df_dates <- rbind(df_dates,df)
   }
-  rownames(df_dates) <- df_dates$ID
-
-  # daterange from earliest to latest date of all database entries.
-  startdate <- min(df_dates$startdate)
-  enddate <- max(df_dates$enddate)
-  daterange = c(startdate,enddate)
-  daterange_days = enddate-startdate
   
-  # Split processing window into chunks if the daterange exceeds maxDOWNLOADchunk
-  if (daterange_days>max_download_chunk) {
-    chunks_startdate <- seq(startdate,enddate, by=max_download_chunk)
+  if (length(df_dates)>0) {
+    rownames(df_dates) <- df_dates$ID
+    
+    # daterange from earliest to latest date of all database entries.
+    startdate <- min(df_dates$startdate)
+    enddate <- max(df_dates$enddate)
+    daterange = c(startdate,enddate)
+    daterange_days = enddate-startdate
+    
+    # Split processing window into chunks if the daterange exceeds maxDOWNLOADchunk
+    if (daterange_days>max_download_chunk) {
+      chunks_startdate <- seq(startdate,enddate, by=max_download_chunk)
+    } else {
+      chunks_startdate <- daterange[1] 
+    }
+    downloadchunks <- data.frame(start=chunks_startdate, end=c(chunks_startdate[-1]-1,enddate))
   } else {
-    chunks_startdate <- daterange[1] 
+    downloadchunks = data.frame()
   }
-  downloadchunks <- data.frame(start=chunks_startdate, end=c(chunks_startdate[-1]-1,enddate))
   
   # Start Updating data: Loop over all downloadchunks resp. daterange pieces. After every chunk, delete temporary files to free harddisk space. 
   # Within the downloadchunk loop, loop over every entry of the database 
-  for (j in 1:nrow(downloadchunks)) {
+  for (j in seq(length=nrow(downloadchunks))) {
     removefinally <- c() # Empty character vector that collects temporary files, that are not required anymore after each downloadchunk
-    for (i in 1:nrow(db_frozen)) {
+    for (i in index2Update) {
       ID <- as.character(db_frozen$ID[i])
       name=as.character(db_frozen$name[i])
       
@@ -457,6 +491,7 @@ UpdateData <- function(db, storage_location, srcstorage=NULL, geotiff_processor,
       unlink(removefinally) 
     }
   }
+  
 }
 
 CropFromGeotiff <- function(daterange, shapefilepath, srcfolder, dstfolder, geotiff_compression=FALSE) {
@@ -542,7 +577,7 @@ db <- dbConnect(drv = RSQLite::SQLite(), dbname=DATABASE_LOC)
 
 if (length(dbListTables(db))==0) {
   cat("! First startup: Initialising database")
-  query <- dbSendStatement(conn = db,"CREATE TABLE settings (ID INTEGER PRIMARY KEY,name TEXT, geojson TEXT NOT NULL, is_subregion_of INTEGER DEFAULT 1, store_geotiff INTEGER DEFAULT 1, store_length INTEGER, cloud_correct INTEGER DEFAULT 1, timeseries INTEGER DEFAULT 1, elev_split INTEGER, earliestdate TEXT DEFAULT '2000-01-01', latestdate TEXT, deletion INTEGER DEFAULT 0, last_obs_ts TEXT, last_obs_gtif TEXT)")
+  query <- dbSendStatement(conn = db,"CREATE TABLE settings (ID INTEGER PRIMARY KEY,name TEXT, geojson TEXT NOT NULL, is_subregion_of INTEGER DEFAULT 1, store_geotiff INTEGER DEFAULT 1, store_length INTEGER, cloud_correct INTEGER DEFAULT 1, timeseries INTEGER DEFAULT 1, elev_split INTEGER, earliestdate TEXT DEFAULT '2000-01-01', latestdate TEXT, deletion INTEGER DEFAULT 0, last_obs_ts TEXT, last_obs_gtif TEXT, locked INTEGER DEFAULT 0)")
   dbClearResult(query)
   query <- dbSendStatement(conn = db,"CREATE TABLE geotiffs (ID INTEGER PRIMARY KEY, filepath TEXT,catchmentid INTEGER NOT NULL, date TEXT, CONSTRAINT file_unique UNIQUE (filepath))")
   dbClearResult(query)
@@ -559,8 +594,7 @@ if (length(dbListTables(db))==0) {
 dbDisconnect(db)
 
 #database <- read.csv(DATABASE_LOC, comment.char='#', stringsAsFactors = TRUE)
-UpdateData(db = DATABASE_LOC, storage_location=DATASTORAGE_LOC, srcstorage = MODIS_DATASTORAGE, geotiff_processor=GEOTIFF_PROCESSOR, max_download_chunk = maxDOWNLOADchunk)
+UpdateData(db = DATABASE_LOC, storage_location=DATASTORAGE_LOC, srcstorage = MODIS_DATASTORAGE, geotiff_processor=GEOTIFF_PROCESSOR, max_download_chunk = maxDOWNLOADchunk, update_days_limit = limit_past_days)
   
+cat("\n")
 sink()
-unlink(newlockfile)
-
