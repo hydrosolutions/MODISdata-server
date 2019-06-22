@@ -29,7 +29,7 @@ download_stdout = None
 def load_config(configfile,flaskapp):
     """Load config file and check required values"""
 
-    required = ["MODIS_DATASTORAGE", "DATASTORAGE_LOC", "DATABASE_LOC","DOWNLOAD_TRIGGER","APP_USER","APP_PW"]
+    required = ["MODIS_DATASTORAGE", "DATASTORAGE_LOC", "LOGFILE_LOC", "DATABASE_LOC","DOWNLOAD_TRIGGER","APP_USER","APP_PW"]
     input = dict()
     configvariables = dict()
     with open(configfile) as f:
@@ -175,15 +175,23 @@ def data_processor_status():
     status = 'idle'
     content = None
     uptime = None
-    for file in os.listdir(app.config['DATASTORAGE_LOC']):
-        if file.endswith(".LOCKED"):
-            status = 'running'
-            fullpath = os.path.join(app.config['DATASTORAGE_LOC'],file)
-            reader = open(fullpath, 'r')
-            content = reader.read()
-            starttime = dt.strptime(file.replace(".LOCKED",""), "%Y-%m-%d %H:%M:%S")
-            uptime = dt.today()-starttime
-            break
+    last_starttime = dt.strptime("1970-01-01 00:00:00", "%Y-%m-%d %H:%M:%S")
+    last_file = None
+    for file in os.listdir(app.config['LOGFILE_LOC']):
+        if file.endswith(".log"):
+            starttime = dt.strptime(file.replace(".log",""), "%Y-%m-%d %H:%M:%S")
+            if starttime > last_starttime:
+                last_starttime = starttime
+                last_file = file
+                
+    if last_file:
+        status = 'running'
+        fullpath = os.path.join(app.config['LOGFILE_LOC'],last_file)
+        reader = open(fullpath, 'r')
+        content = reader.read()[-5000:]
+        starttime = dt.strptime(last_file.replace(".log",""), "%Y-%m-%d %H:%M:%S")
+        uptime = dt.today()-starttime
+            
     return {'status': status, 'output': content, 'uptime': str(uptime)}
 
 @app.route('/data_processor', methods=['PUT'])
@@ -219,13 +227,14 @@ def response_data_processor_status():
 @app.route('/catchments', methods=['GET'])
 def list_catchments():
     """return json of catchments and their attributes"""
-    entries = query_db('select ID,name,last_obs_ts,last_obs_gtif from settings where deletion = 0')
+    entries = query_db('select ID,name,last_obs_ts,last_obs_gtif,locked from settings where deletion = 0')
     for i, entry in enumerate(entries):
         entries[i].pop('geojson', None)
         entries[i].update({"href":url_for('show_catchment',id=entry["ID"])})
         entries[i].update({"timeseries": {'href' : url_for('list_timeseries', id=entry["ID"])}})
         entries[i].update({"geotiff": {'href' : url_for('list_geotiff', id=entry["ID"])}})
         entries[i].update({"geojson": {'href' : url_for('show_geojson', id=entry["ID"])}})
+        entries[i]["updating"] = entries[i].pop("locked")
     return jsonify(entries)
 
 @app.route('/catchments', methods=['POST'])
