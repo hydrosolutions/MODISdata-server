@@ -188,7 +188,7 @@ def data_processor_status(n=0):
         file = file_date_dict[date_selected]
         fullpath = os.path.join(app.config['LOGFILE_LOC'],file)
         reader = open(fullpath, 'r')
-        content = reader.read().replace("\n","<br>").split("<br>",1)[-1]
+        content = reader.read().replace("\n","<br>")
         starttime = file.replace(".log","")
     return {"content" : content, "starttime": starttime}
 
