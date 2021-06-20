@@ -40,3 +40,10 @@ Closed endpoints require basic authentication, e.g. curl -u \<user>:\<password> 
 
 The error responses to expect are listed in each description. Every error response contains a json in its body with the field "message". This field gives more detailed information about what went wrong and might help to identify and solve the problem.
 
+## Start server
+```shell
+cd /srv/modis-snow-server/
+source virtualenv/bin/activate
+cd bin/server/
+gunicorn --bind 0.0.0.0:8000 server:app --daemon
+```
